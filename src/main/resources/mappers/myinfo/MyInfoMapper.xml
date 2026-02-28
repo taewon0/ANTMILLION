@@ -39,7 +39,7 @@
     </update>
 
     <update id="deleteMember">
-        UPDATE FROM member
+        UPDATE member
         SET deleted_at = NOW(),
             email = CONCAT(email, '_del_', user_id),
             nickname = CONCAT(nickname, '_del_', user_id)
