@@ -88,4 +88,12 @@
           AND quantity >= #{quantity}
     </update>
 
+    <delete id="deleteByStockCodes">
+        DELETE FROM asset
+        WHERE stock_code IN
+        <foreach collection="codes" item="code" open="(" separator="," close=")">
+            #{code}
+        </foreach>
+    </delete>
+
 </mapper>

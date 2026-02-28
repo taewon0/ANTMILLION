@@ -59,4 +59,9 @@ public interface StockOrderMapper {
      * 미체결 수량 합계: 주문수량-체결수량 합계
      */
     Integer getSumUnexecutedQty(@Param("accountId") Long accountId, @Param("stockCode") String stockCode, @Param("type") String type);
+
+    /**
+     * 상장 폐지 종목에 대한 주문 내역을 모두 취소 처리
+     */
+    int cancelOrdersByStockCodes(@Param("codes") List<String> codes);
 }

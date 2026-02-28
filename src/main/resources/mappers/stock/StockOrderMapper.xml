@@ -112,4 +112,15 @@
           AND o.status IN ('WAIT', 'PARTIAL')
     </select>
 
+    <update id="cancelOrdersByStockCodes">
+        UPDATE stock_order
+        SET status = 'CANCEL',
+        updated_at = NOW()
+        WHERE status IN ('WAIT','PARTIAL')
+        AND stock_code IN
+        <foreach collection="codes" item="code" open="(" separator="," close=")">
+            #{code}
+        </foreach>
+    </update>
+
 </mapper>

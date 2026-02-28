@@ -19,4 +19,6 @@ public interface InterestMapper {
     // 특정 종목이 관심종목인지 확인
     int countInterest(@Param("stockCode") String stockCode, @Param("accountId") Long accountId);
 
+    // 상장폐지 된 종목은 관심종목에서 삭제
+    int deleteByStockCodes(@Param("codes") List<String> codes);
 }

@@ -11,4 +11,5 @@ public interface StockSyncMapper {
     int insertNewStocks();
     int deleteOldStocks();
     int countStock();
+    List<String> selectDelistedCodes();
 }

@@ -4,6 +4,8 @@ import com.antmillion.stock.dto.AssetDTO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.List;
+
 @Mapper
 public interface AssetMapper {
 
@@ -52,4 +54,9 @@ public interface AssetMapper {
                                      @Param("stockCode") String stockCode,
                                      @Param("quantity") Integer quantity,
                                      @Param("costBasis") Long costBasis);
+
+    /**
+     * 상장 폐지된 종목은 보유주식에서 제거
+     */
+    int deleteByStockCodes(@Param("codes") List<String> codes);
 }

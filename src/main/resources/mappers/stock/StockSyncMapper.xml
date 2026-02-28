@@ -44,4 +44,12 @@
         SELECT COUNT(*) FROM stock WHERE deleted_at IS NULL
     </select>
 
+    <select id="selectDelistedCodes" resultType="string">
+        SELECT s.stock_code
+        FROM stock s
+                 LEFT JOIN temp_stock t ON s.stock_code = t.stock_code
+        WHERE t.stock_code IS NULL
+          AND s.deleted_at IS NULL
+    </select>
+
 </mapper>

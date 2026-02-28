@@ -33,4 +33,13 @@
           AND account_id = #{accountId}
     </select>
 
+    <!-- 상장 폐지된 종목을 관심 종목에서 삭제 -->
+    <delete id="deleteByStockCodes">
+        DELETE FROM interest
+        WHERE stock_code IN
+        <foreach collection="codes" item="code" open="(" separator="," close=")">
+            #{code}
+        </foreach>
+    </delete>
+
 </mapper>
