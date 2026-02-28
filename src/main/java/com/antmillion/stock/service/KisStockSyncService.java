@@ -3,6 +3,9 @@ package com.antmillion.stock.service;
 import com.antmillion.stock.component.StockCache;
 import com.antmillion.stock.dto.StockDTO;
 import com.antmillion.stock.dto.SyncResult;
+import com.antmillion.stock.mapper.AssetMapper;
+import com.antmillion.stock.mapper.InterestMapper;
+import com.antmillion.stock.mapper.StockOrderMapper;
 import com.antmillion.stock.mapper.StockSyncMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +30,9 @@ public class KisStockSyncService {
     private static final String KOSDAQ_URL = "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip";
 
     private final StockSyncMapper stockSyncMapper;
+    private final StockOrderMapper stockOrderMapper;
+    private final InterestMapper interestMapper;
+    private final AssetMapper assetMapper;
     private final StockCache stockCache;
 
     @Transactional
@@ -107,6 +113,17 @@ public class KisStockSyncService {
         int insertedCount = stockSyncMapper.insertNewStocks();
         log.info("새로 추가된 종목: {}", insertedCount);
 
+        // 삭제된 종목에 대한 처리
+        List<String> delistedCodes = stockSyncMapper.selectDelistedCodes();
+        if (!delistedCodes.isEmpty()) {
+            // 주문 취소 처리
+            stockOrderMapper.cancelOrdersByStockCodes(delistedCodes);
+            // 관심종목에서 제거
+            interestMapper.deleteByStockCodes(delistedCodes);
+            // 보유주식에서 제거
+            assetMapper.deleteByStockCodes(delistedCodes);
+        }
+
         // 삭제된 종목 제거
         int deletedCount = stockSyncMapper.deleteOldStocks();
         log.info("삭제된 종목: {}", deletedCount);
@@ -114,6 +131,7 @@ public class KisStockSyncService {
         // 동기화 후 종목 수 확인
         int afterCount = stockSyncMapper.countStock();
         log.info("동기화 후 stock 테이블 활성 종목 수: {}", afterCount);
+
 
         // 6. 캐시 갱신
         log.info("StockCache 갱신 중...");
