@@ -10,6 +10,7 @@
             stock_name as stockName,
             stock_image as stockImage
         FROM stock
+        WHERE deleted_at IS NULL
     </select>
 
 </mapper>

@@ -161,7 +161,7 @@
       delForm.addEventListener('submit', async function (e) {
         e.preventDefault();
 
-        const msg = '정말 회원탈퇴 하시겠습니까?\n탈퇴 시 계정 및 연동된 데이터가 모두 삭제되며 복구할 수 없습니다.';
+        const msg = '정말 회원탈퇴 하시겠습니까?\n탈퇴 시 계정은 비활성화되며 복구할 수 없습니다. 단, 서비스 이용 기록은 일정 기간 보관될 수 있습니다.';
         if (!confirm(msg)) return;
 
         const pw = ($('deletePassword')?.value || '').trim();

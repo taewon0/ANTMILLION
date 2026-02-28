@@ -24,22 +24,24 @@
     </insert>
 
     <insert id="insertNewStocks">
-        INSERT INTO stock(stock_code, stock_name)
-        SELECT t.stock_code, t.stock_name
+        INSERT INTO stock(stock_code, stock_name, deleted_at)
+        SELECT t.stock_code, t.stock_name, NULL
         FROM temp_stock t
-                 LEFT JOIN stock s ON t.stock_code = s.stock_code
-        WHERE s.stock_code IS NULL
+        ON DUPLICATE KEY UPDATE
+            stock_name = VALUES(stock_name),
+            deleted_at = NULL
     </insert>
 
-    <delete id="deleteOldStocks">
-        DELETE s
-        FROM stock s
-                 LEFT JOIN temp_stock t ON s.stock_code = t.stock_code
+    <update id="deleteOldStocks">
+        UPDATE stock s
+            LEFT JOIN temp_stock t ON s.stock_code = t.stock_code
+            SET s.deleted_at = NOW()
         WHERE t.stock_code IS NULL
-    </delete>
+          AND s.deleted_at IS NULL
+    </update>
 
     <select id="countStock" resultType="int">
-        SELECT COUNT(*) FROM stock
+        SELECT COUNT(*) FROM stock WHERE deleted_at IS NULL
     </select>
 
 </mapper>

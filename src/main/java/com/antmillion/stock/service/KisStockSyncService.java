@@ -101,7 +101,7 @@ public class KisStockSyncService {
 
         // 기존 stock 테이블 종목 수 확인
         int beforeCount = stockSyncMapper.countStock();
-        log.info("동기화 전 stock 테이블 종목 수: {}", beforeCount);
+        log.info("동기화 전 stock 테이블 활성 종목 수: {}", beforeCount);
 
         // 새로운 종목 추가
         int insertedCount = stockSyncMapper.insertNewStocks();
@@ -113,7 +113,7 @@ public class KisStockSyncService {
 
         // 동기화 후 종목 수 확인
         int afterCount = stockSyncMapper.countStock();
-        log.info("동기화 후 stock 테이블 종목 수: {}", afterCount);
+        log.info("동기화 후 stock 테이블 활성 종목 수: {}", afterCount);
 
         // 6. 캐시 갱신
         log.info("StockCache 갱신 중...");

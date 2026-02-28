@@ -92,7 +92,7 @@
                 <button class="myinfo-modal-close" onclick="closeDeleteModal()">✕</button>
                 <h2 class="myinfo-modal-title">회원탈퇴</h2>
                 <p class="myinfo-modal-message">
-                    회원탈퇴 시 계정 및 연동된 데이터가 모두 삭제되며 복구할 수 없습니다.
+                    회원탈퇴 시 계정은 비활성화되며 복구할 수 없습니다. 단, 서비스 이용 기록은 일정 기간 보관될 수 있습니다.
                 </p>
 
                 <form id="deleteForm">
