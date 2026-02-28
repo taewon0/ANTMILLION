@@ -15,6 +15,7 @@
         FROM member m
         LEFT JOIN account a ON a.user_id = m.user_id
         WHERE m.user_id = #{userId}
+          AND deleted_at IS NULL
         LIMIT 1
     </select>
 
@@ -25,6 +26,7 @@
             password AS password
         FROM member
         WHERE user_id = #{userId}
+          AND deleted_at IS NULL
         LIMIT 1
     </select>
 
@@ -33,11 +35,16 @@
         SET password = #{password}
         WHERE user_id = #{userId}
           AND provider = 'LOCAL'
+          AND deleted_at IS NULL
     </update>
 
-    <delete id="deleteMember">
-        DELETE FROM member
+    <update id="deleteMember">
+        UPDATE FROM member
+        SET deleted_at = NOW(),
+            email = CONCAT(email, '_del_', user_id),
+            nickname = CONCAT(nickname, '_del_', user_id)
         WHERE user_id = #{userId}
-    </delete>
+          AND deleted_at IS NULL
+    </update>
 
 </mapper>

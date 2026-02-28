@@ -22,40 +22,45 @@
   </insert>
 
   <select id="countByEmail" resultType="int">
-    SELECT COUNT(*) FROM member WHERE email = #{email}
+    SELECT COUNT(*) FROM member WHERE email = #{email} AND deleted_at IS NULL
   </select>
 
   <select id="countByNickname" resultType="int">
-    SELECT COUNT(*) FROM member WHERE nickname = #{nickname}
+    SELECT COUNT(*) FROM member WHERE nickname = #{nickname} AND deleted_at IS NULL
   </select>
 
   <select id="selectByEmail" resultMap="MemberMap">
     SELECT user_id, rank_id, email, password, nickname, point, provider
     FROM member
     WHERE email = #{email}
+      AND deleted_at IS NULL
   </select>
 
   <update id="updateUserPoint">
     UPDATE member
     SET point = LEAST(10000, GREATEST(0, COALESCE(point, 0) + #{point}))
     WHERE user_id = #{userId}
+      AND deleted_at IS NULL
   </update>
 
   <update id="updateUserRank">
     UPDATE member
     SET rank_id = #{rankId}
     WHERE user_id = #{userId}
+      AND deleted_at IS NULL
   </update>
 
   <select id="selectUserPoint" resultType="int">
     SELECT point
     FROM member
     WHERE user_id = #{userId}
+      AND deleted_at IS NULL
   </select>
 
   <select id="selectUserNickName" resultType="String">
     SELECT nickname
     FROM member
     where user_id = #{userId}
+      AND deleted_at IS NULL
   </select>
 </mapper>

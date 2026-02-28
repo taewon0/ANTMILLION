@@ -15,6 +15,7 @@
 		  provider AS provider
 		  FROM member
 		WHERE email = #{email}
+		  AND deleted_at IS NULL
 		LIMIT 1
 	</select>
 
@@ -28,6 +29,7 @@
 		  provider AS provider
 		FROM member
 		WHERE user_id = #{userId}
+		  AND deleted_at IS NULL
 		LIMIT 1
 	</select>
 
