@@ -109,7 +109,7 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 
 				// STOMP 전송
 				messagingTemplate.convertAndSend("/topic/kis-trade/present" + stockCode, tradeData); // 실시간 체결가
-				log.info("### [실시간 체결가] 종목: {} ###\n{}", stockCode, tradeData);
+//				log.info("### [실시간 체결가] 종목: {} ###\n{}", stockCode, tradeData);
 			} else if (isAskBidTrId(trId)) {
 				String[] data = parts[3].split("\\^");
 				Map<String, String> askBidData = new HashMap<>();
