@@ -38,6 +38,7 @@ build/
 ### 설정 파일 ###
 *.properties
 !.mvn/wrapper/maven-wrapper.properties
+.env.local
 
 ### Mac OS ###
 .DS_Store
@@ -60,3 +61,6 @@ log/
 *.jar
 *.war
 !.mvn/wrapper/maven-wrapper.jar
+
+### 개인 문서 파일 ###
+docs/
