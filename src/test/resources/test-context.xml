@@ -14,20 +14,9 @@
            http://mybatis.org/schema/mybatis-spring
            http://mybatis.org/schema/mybatis-spring.xsd">
 
-    <!-- Property 파일 -->
-    <context:property-placeholder location="classpath:db.properties"/>
-
-    <!-- DataSource -->
-    <bean id="hikariConfig" class="com.zaxxer.hikari.HikariConfig">
-        <property name="driverClassName" value="${db.driver}"/>
-        <property name="jdbcUrl" value="${db.url}"/>
-        <property name="username" value="${db.username}"/>
-        <property name="password" value="${db.password}"/>
-    </bean>
-
-    <bean id="dataSource" class="com.zaxxer.hikari.HikariDataSource" destroy-method="close">
-        <constructor-arg ref="hikariConfig"/>
-    </bean>
+    <!-- No application properties/component scan: only the guarded disposable DB. -->
+    <bean id="dataSource" class="com.antmillion.stock.support.IsolatedTestDataSource"
+          factory-method="create" destroy-method="close"/>
 
     <!-- JdbcTemplate -->
     <bean id="jdbcTemplate" class="org.springframework.jdbc.core.JdbcTemplate">
