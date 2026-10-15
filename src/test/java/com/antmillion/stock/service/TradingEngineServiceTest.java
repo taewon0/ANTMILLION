@@ -4,19 +4,24 @@ import com.antmillion.stock.dto.AssetDTO;
 import com.antmillion.stock.mapper.AssetMapper;
 import com.antmillion.stock.mapper.RealizedPnlMapper;
 import com.antmillion.stock.mapper.StockOrderMapper;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.transaction.AfterTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.Assert.*;
 
@@ -43,33 +48,41 @@ public class TradingEngineServiceTest {
 
     private JdbcTemplate jdbcTemplate;
 
-    private final Long TEST_ACCOUNT_ID = 1L;
+    private Long testAccountId;
     private final String TEST_STOCK_CODE = "TEST01";
 
     @Before
     public void setUp() {
-        // JdbcTemplate 초기화
         this.jdbcTemplate = new JdbcTemplate(dataSource);
-        // 테스트 데이터 초기화
-        jdbcTemplate.execute("DELETE FROM realized_pnl");
-        jdbcTemplate.execute("DELETE FROM trade_log");
-        jdbcTemplate.execute("DELETE FROM stock_order");
-        jdbcTemplate.execute("DELETE FROM asset");
-
-        // 테스트용 종목 추가 (없으면)
-        jdbcTemplate.execute(
-                "INSERT IGNORE INTO stock (stock_code, stock_name) " +
-                        "VALUES ('" + TEST_STOCK_CODE + "', '테스트종목')"
-        );
+        KeyHolder memberKey = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO member (rank_id, nickname, provider) VALUES (NULL, ?, 'LOCAL')",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setString(1, "fixture-" + UUID.randomUUID());
+            return statement;
+        }, memberKey);
+        Long userId = memberKey.getKey().longValue();
+        KeyHolder accountKey = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO account (user_id, account_number, balance) VALUES (?, ?, 50000000)",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, userId);
+            statement.setString(2, "fixture-" + UUID.randomUUID());
+            return statement;
+        }, accountKey);
+        testAccountId = accountKey.getKey().longValue();
+        jdbcTemplate.update("INSERT INTO stock (stock_code, stock_name) VALUES (?, ?)",
+                TEST_STOCK_CODE, "테스트종목");
     }
 
-    @After
-    public void tearDown() {
-        // 테스트 후 정리
-        jdbcTemplate.execute("DELETE FROM realized_pnl");
-        jdbcTemplate.execute("DELETE FROM trade_log");
-        jdbcTemplate.execute("DELETE FROM stock_order");
-        jdbcTemplate.execute("DELETE FROM asset");
+    @AfterTransaction
+    public void verifyFixtureRollback() {
+        assertEquals("계좌 fixture 롤백", Integer.valueOf(0), jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM account WHERE account_id = ?", Integer.class, testAccountId));
+        assertEquals("종목 fixture 롤백", Integer.valueOf(0), jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stock WHERE stock_code = ?", Integer.class, TEST_STOCK_CODE));
     }
 
     /**
@@ -103,7 +116,7 @@ public class TradingEngineServiceTest {
         Integer assetQty = jdbcTemplate.queryForObject(
                 "SELECT quantity FROM asset WHERE account_id = ? AND stock_code = ?",
                 Integer.class,
-                TEST_ACCOUNT_ID, TEST_STOCK_CODE
+                testAccountId, TEST_STOCK_CODE
         );
         System.out.println("매수 후 보유 수량: " + assetQty);
 
@@ -130,7 +143,7 @@ public class TradingEngineServiceTest {
         Integer afterSellQty = jdbcTemplate.queryForObject(
                 "SELECT quantity FROM asset WHERE account_id = ? AND stock_code = ?",
                 Integer.class,
-                TEST_ACCOUNT_ID, TEST_STOCK_CODE
+                testAccountId, TEST_STOCK_CODE
         );
         System.out.println("매도 후 보유 수량: " + afterSellQty);
 
@@ -138,18 +151,18 @@ public class TradingEngineServiceTest {
         int pnlCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM realized_pnl WHERE account_id = ?",
                 Integer.class,
-                TEST_ACCOUNT_ID
+                testAccountId
         );
         System.out.println("realized_pnl 레코드 수: " + pnlCount);
 
         if (pnlCount > 0) {
             List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
                     "SELECT * FROM realized_pnl WHERE account_id = ?",
-                    TEST_ACCOUNT_ID
+                    testAccountId
             );
             System.out.println("실현손익 내역: " + pnlList);
         } else {
-            System.out.println("⚠️ realized_pnl에 데이터가 없습니다!");
+            System.out.println("realized_pnl에 데이터가 없습니다!");
         }
 
         // 4. trade_log 전체 확인
@@ -158,7 +171,7 @@ public class TradingEngineServiceTest {
         );
         System.out.println("전체 체결 로그: " + allTrades);
 
-        System.out.println("\n✅ processExecution 테스트 완료");
+        System.out.println("\n processExecution 테스트 완료");
     }
 
     /**
@@ -187,7 +200,7 @@ public class TradingEngineServiceTest {
 
         // 3. 실현손익 검증
         Map<String, Object> pnl = jdbcTemplate.queryForMap(
-                "SELECT * FROM realized_pnl WHERE account_id = ?", TEST_ACCOUNT_ID
+                "SELECT * FROM realized_pnl WHERE account_id = ?", testAccountId
         );
 
         assertEquals("매도 수량", 5, ((Number)pnl.get("sell_quantity")).intValue());
@@ -197,12 +210,12 @@ public class TradingEngineServiceTest {
         assertEquals("평균 단가", 10000.0, ((Number)pnl.get("avg_price")).doubleValue(), 0.01);
 
         // 4. 자산 검증
-        AssetDTO asset = assetMapper.getAssetForSell(TEST_ACCOUNT_ID, TEST_STOCK_CODE);
+        AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertEquals("남은 수량", 5, asset.getQuantity().intValue());
         assertEquals("남은 매수금액", 50000L, asset.getPurchaseAmount().longValue());
         assertEquals("평균단가 유지", 10000.0, asset.getAvgPrice(), 0.01);
 
-        System.out.println("✅ 테스트 1 통과");
+        System.out.println("테스트 1 통과");
     }
 
     /**
@@ -238,7 +251,7 @@ public class TradingEngineServiceTest {
 
         // 4. 실현손익 검증
         Map<String, Object> pnl = jdbcTemplate.queryForMap(
-                "SELECT * FROM realized_pnl WHERE account_id = ?", TEST_ACCOUNT_ID
+                "SELECT * FROM realized_pnl WHERE account_id = ?", testAccountId
         );
 
         assertEquals("매도 수량", 2, ((Number)pnl.get("sell_quantity")).intValue());
@@ -247,11 +260,11 @@ public class TradingEngineServiceTest {
         assertEquals("실현 손익", 2000L, ((Number)pnl.get("realized_profit")).longValue());
 
         // 5. 자산 검증
-        AssetDTO asset = assetMapper.getAssetForSell(TEST_ACCOUNT_ID, TEST_STOCK_CODE);
+        AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertEquals("남은 수량", 3, asset.getQuantity().intValue());
         assertEquals("남은 매수금액", 30002L, asset.getPurchaseAmount().longValue());
 
-        System.out.println("✅ 테스트 2 통과");
+        System.out.println("테스트 2 통과");
     }
 
     /**
@@ -295,8 +308,8 @@ public class TradingEngineServiceTest {
 
         // 5. 실현손익 검증 (2건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
-                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date",
-                TEST_ACCOUNT_ID
+                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date, real_id",
+                testAccountId
         );
 
         assertEquals("실현손익 건수", 2, pnlList.size());
@@ -316,10 +329,10 @@ public class TradingEngineServiceTest {
         assertEquals("2차 실현 손익", -3002L, ((Number)pnl2.get("realized_profit")).longValue());
 
         // 6. 자산 삭제 검증 (전량 매도)
-        AssetDTO asset = assetMapper.getAssetForSell(TEST_ACCOUNT_ID, TEST_STOCK_CODE);
+        AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 3 통과");
+        System.out.println("테스트 3 통과");
     }
 
     /**
@@ -362,8 +375,8 @@ public class TradingEngineServiceTest {
 
         // 5. 실현손익 검증 (3건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
-                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date",
-                TEST_ACCOUNT_ID
+                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date, real_id",
+                testAccountId
         );
 
         assertEquals("실현손익 건수", 3, pnlList.size());
@@ -381,10 +394,10 @@ public class TradingEngineServiceTest {
         assertEquals("3차 실현손익", -1000L, ((Number)pnl3.get("realized_profit")).longValue());
 
         // 6. 자산 삭제 검증
-        AssetDTO asset = assetMapper.getAssetForSell(TEST_ACCOUNT_ID, TEST_STOCK_CODE);
+        AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 4 통과");
+        System.out.println("테스트 4 통과");
     }
 
     /**
@@ -419,8 +432,8 @@ public class TradingEngineServiceTest {
 
         // 4. 실현손익 검증 (2건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
-                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date",
-                TEST_ACCOUNT_ID
+                "SELECT * FROM realized_pnl WHERE account_id = ? ORDER BY sell_date, real_id",
+                testAccountId
         );
 
         assertEquals("실현손익 건수", 2, pnlList.size());
@@ -434,10 +447,10 @@ public class TradingEngineServiceTest {
         assertEquals("2차 실현손익", 2500L, ((Number)pnl2.get("realized_profit")).longValue());
 
         // 5. 자산 삭제 검증
-        AssetDTO asset = assetMapper.getAssetForSell(TEST_ACCOUNT_ID, TEST_STOCK_CODE);
+        AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 5 통과");
+        System.out.println("테스트 5 통과");
     }
 
     // ===== 헬퍼 메소드 =====
@@ -447,7 +460,7 @@ public class TradingEngineServiceTest {
                 "INSERT INTO stock_order (account_id, stock_code, transaction_type, order_type, " +
                         "quantity, order_price, status, created_at, updated_at) " +
                         "VALUES (?, ?, 'BUY', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // PENDING → WAIT
-                TEST_ACCOUNT_ID, TEST_STOCK_CODE, quantity, price
+                testAccountId, TEST_STOCK_CODE, quantity, price
         );
     }
 
@@ -456,7 +469,7 @@ public class TradingEngineServiceTest {
                 "INSERT INTO stock_order (account_id, stock_code, transaction_type, order_type, " +
                         "quantity, order_price, status, created_at, updated_at) " +
                         "VALUES (?, ?, 'SELL', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // PENDING → WAIT
-                TEST_ACCOUNT_ID, TEST_STOCK_CODE, quantity, price
+                testAccountId, TEST_STOCK_CODE, quantity, price
         );
     }
 }

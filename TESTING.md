@@ -1,0 +1,18 @@
+# 체결 테스트
+
+Docker Desktop(Linux 엔진)을 실행하고 Java 11 이상과 Maven이 설치된 상태에서,
+프로젝트 루트의 터미널에 아래 명령을 입력합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-Trading.ps1
+```
+
+별도 DB 설정 없이 다음 과정을 자동으로 진행합니다.
+
+1. Docker에 테스트 전용 임시 MySQL을 만들고 테이블을 준비합니다.
+2. 테스트 코드에서 가짜 회원·계좌·종목·주문을 넣어 체결 및 DB 안전장치 테스트 12개를 실행합니다.
+3. 테스트 데이터가 롤백되어 남지 않았는지 확인합니다.
+4. 테스트가 실패해도 임시 컨테이너와 네트워크를 제거합니다. 임시 DB 데이터도 함께 사라집니다.
+
+기존 개발용 DB와 별도로 실행합니다. 일반 `mvn test`나 IDE 테스트 버튼은 임시 DB를 자동 생성하지 않습니다.
+터미널이나 Docker를 강제 종료하면 테스트 자원이 남을 수 있습니다.
