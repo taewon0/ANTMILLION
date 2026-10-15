@@ -162,7 +162,7 @@ public class TradingEngineServiceTest {
             );
             System.out.println("실현손익 내역: " + pnlList);
         } else {
-            System.out.println("⚠️ realized_pnl에 데이터가 없습니다!");
+            System.out.println("realized_pnl에 데이터가 없습니다!");
         }
 
         // 4. trade_log 전체 확인
@@ -171,7 +171,7 @@ public class TradingEngineServiceTest {
         );
         System.out.println("전체 체결 로그: " + allTrades);
 
-        System.out.println("\n✅ processExecution 테스트 완료");
+        System.out.println("\n processExecution 테스트 완료");
     }
 
     /**
@@ -215,7 +215,7 @@ public class TradingEngineServiceTest {
         assertEquals("남은 매수금액", 50000L, asset.getPurchaseAmount().longValue());
         assertEquals("평균단가 유지", 10000.0, asset.getAvgPrice(), 0.01);
 
-        System.out.println("✅ 테스트 1 통과");
+        System.out.println("테스트 1 통과");
     }
 
     /**
@@ -264,7 +264,7 @@ public class TradingEngineServiceTest {
         assertEquals("남은 수량", 3, asset.getQuantity().intValue());
         assertEquals("남은 매수금액", 30002L, asset.getPurchaseAmount().longValue());
 
-        System.out.println("✅ 테스트 2 통과");
+        System.out.println("테스트 2 통과");
     }
 
     /**
@@ -332,7 +332,7 @@ public class TradingEngineServiceTest {
         AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 3 통과");
+        System.out.println("테스트 3 통과");
     }
 
     /**
@@ -397,7 +397,7 @@ public class TradingEngineServiceTest {
         AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 4 통과");
+        System.out.println("테스트 4 통과");
     }
 
     /**
@@ -450,7 +450,7 @@ public class TradingEngineServiceTest {
         AssetDTO asset = assetMapper.getAssetForSell(testAccountId, TEST_STOCK_CODE);
         assertNull("전량 매도 후 자산 삭제", asset);
 
-        System.out.println("✅ 테스트 5 통과");
+        System.out.println("테스트 5 통과");
     }
 
     // ===== 헬퍼 메소드 =====
