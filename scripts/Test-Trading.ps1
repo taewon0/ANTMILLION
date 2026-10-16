@@ -22,7 +22,7 @@ try {
         throw 'Disposable test MySQL failed to start.'
     }
 
-    & mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=IsolatedTestDataSourceTest,IsolatedTestDatabaseTest,TradingEngineServiceTest' test
+    & mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=IsolatedTestDataSourceTest,IsolatedTestDatabaseTest,TradingEngineServiceTest,StockOrderModifyTest' test
     $testExitCode = $LASTEXITCODE
 
     # All fixture rows must have rolled back, including after failed tests.

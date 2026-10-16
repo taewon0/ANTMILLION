@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- Reuse only the guarded disposable DB; no runtime scan or external clients. -->
+    <import resource="test-context.xml"/>
+
+    <bean id="accountMapper" class="org.mybatis.spring.mapper.MapperFactoryBean">
+        <property name="mapperInterface" value="com.antmillion.auth.mapper.AccountMapper"/>
+        <property name="sqlSessionFactory" ref="sqlSessionFactory"/>
+    </bean>
+
+    <bean id="stockOrderService" class="com.antmillion.stock.service.StockOrderService">
+        <constructor-arg ref="stockOrderMapper"/>
+        <constructor-arg ref="tradeLogMapper"/>
+        <constructor-arg ref="accountMapper"/>
+        <constructor-arg ref="assetMapper"/>
+    </bean>
+</beans>

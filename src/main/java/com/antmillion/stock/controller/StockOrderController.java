@@ -4,7 +4,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,7 +17,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.antmillion.auth.mapper.AccountMapper;
-import com.antmillion.stock.dto.StockOrderDTO;
+import com.antmillion.stock.dto.StockOrderModifyRequestDTO;
 import com.antmillion.stock.dto.StockOrderResponseDTO;
 import com.antmillion.stock.service.StockOrderService;
 import com.antmillion.user.dto.AccountDTO;
@@ -113,12 +115,25 @@ public class StockOrderController {
      */
     @PostMapping("/modify")
     @ResponseBody
-    public Map<String, Object> modifyOrder(@RequestBody StockOrderDTO orderRequest) {
+    public ResponseEntity<Map<String, Object>> modifyOrder(@RequestBody StockOrderModifyRequestDTO orderRequest) {
         Map<String, Object> response = new HashMap<>();
         try {
-            boolean result = stockOrderService.modifyOrder(orderRequest);
+            if (currentUserId() == null) {
+                response.put("success", false);
+                response.put("message", "로그인이 필요합니다.");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+            Long accountId = currentAccountId();
+            if (accountId == null) {
+                throw new AccessDeniedException("주문을 정정할 권한이 없습니다.");
+            }
+            boolean result = stockOrderService.modifyOrder(accountId, orderRequest.toOrder());
             response.put("success", result);
             response.put("message", result ? "정정이 완료되었습니다." : "정정 실패");
+        } catch (AccessDeniedException e) {
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
         } catch (IllegalArgumentException e) {
             response.put("success", false);
             response.put("message", e.getMessage());
@@ -126,7 +141,7 @@ public class StockOrderController {
             response.put("success", false);
             response.put("message", "알 수 없는 오류 발생");
         }
-        return response;
+        return ResponseEntity.ok(response);
     }
 
     private Long currentAccountId() {
