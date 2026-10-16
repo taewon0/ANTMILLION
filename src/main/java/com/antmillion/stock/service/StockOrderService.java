@@ -3,6 +3,7 @@ package com.antmillion.stock.service;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -107,8 +108,27 @@ public class StockOrderService {
 	
 	// 주문 정정
 	@Transactional
-	public boolean modifyOrder(StockOrderDTO orderRequest) {
+	public boolean modifyOrder(Long accountId, StockOrderDTO orderRequest) {
+		if (accountId == null) {
+			throw new AccessDeniedException("주문을 정정할 권한이 없습니다.");
+		}
+		if (orderRequest == null || orderRequest.getOrderId() == null || orderRequest.getOrderId() <= 0) {
+			throw new IllegalArgumentException("올바른 주문 ID가 필요합니다.");
+		}
+		if (orderRequest.getQuantity() == null || orderRequest.getQuantity() <= 0
+				|| orderRequest.getOrderPrice() == null || orderRequest.getOrderPrice() <= 0) {
+			throw new IllegalArgumentException("정정 수량과 가격은 양의 정수여야 합니다.");
+		}
 		StockOrderResponseDTO original = stockOrderMapper.getOrderByOrderId(orderRequest.getOrderId());
+		if (original == null) {
+			throw new IllegalArgumentException("존재하지 않는 주문입니다.");
+		}
+		if (!accountId.equals(original.getAccountId())) {
+			throw new AccessDeniedException("주문을 정정할 권한이 없습니다.");
+		}
+		if (!"WAIT".equals(original.getStatus())) {
+			throw new IllegalArgumentException("대기 중인 주문만 정정할 수 있습니다.");
+		}
 	    // 이미 체결된 수량 합산 조회 (TradeLog 이용)
 	    int executedQty = tradeLogMapper.getTotalExecutedQty(original.getOrderId());
 	    
@@ -116,7 +136,7 @@ public class StockOrderService {
 	    if (orderRequest.getQuantity() < executedQty) {
 	        throw new IllegalArgumentException("정정 수량은 이미 체결된 수량(" + executedQty + "주)보다 적을 수 없습니다.");
 	    }
-	    orderRequest.setAccountId(original.getAccountId());
+	    orderRequest.setAccountId(accountId);
 	    
 	    return stockOrderMapper.updateOrder(orderRequest) > 0;
 	}
