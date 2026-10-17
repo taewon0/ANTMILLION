@@ -693,10 +693,10 @@ function renderExecutedOrders(filter) {
     const tbody = document.querySelector('#executedTable tbody');
     if (!tbody || !window.executedOrderData) return;
 
-    // 1. 필터링 로직 (ExecutedOrdersDTO의 unexecutedQty 기준)
+    // 체결 이력은 주문의 현재 상태와 무관하게 기체결 수량을 기준으로 표시합니다.
     let filtered = window.executedOrderData;
     if (filter === 'executed') {
-        filtered = window.executedOrderData.filter(o => o.status === 'COMPLETED');
+        filtered = window.executedOrderData.filter(o => o.executedQty > 0);
     } else if (filter === 'unexecuted') {
         filtered = window.executedOrderData.filter(o => o.status === "WAIT" || o.status === "PARTIAL");
     }
@@ -709,6 +709,7 @@ function renderExecutedOrders(filter) {
     // 2. 2줄 구조 HTML 생성
     // map 함수의 두 번째 인자인 i(인덱스)를 사용하여 짝수 세트를 판별합니다.
     tbody.innerHTML = filtered.map((o, i) => {
+        const isCancelled = o.status === 'CANCEL';
         const isBuy = o.type === 'BUY' || o.type === '매수';
         const typeClass = isBuy ? 'mypage-buy-badge' : 'mypage-sell-badge';
         const typeText = isBuy ? '매수' : '매도';
@@ -721,8 +722,8 @@ function renderExecutedOrders(filter) {
                 <td class="mypage-stock-name-cell">${o.stockName}</td>
                 <td>${formatNumber(o.orderQty)}</td>
                 <td>${formatNumber(o.executedQty)}</td>
-                <td>${formatNumber(o.unexecutedQty)}</td>
-                <td>${formatNumber(o.unexecutedAmount)}</td>
+                <td>${isCancelled ? '취소' : formatNumber(o.unexecutedQty)}</td>
+                <td>${isCancelled ? '-' : formatNumber(o.unexecutedAmount)}</td>
                 <td class="time-col">${o.orderTime}</td>
             </tr>
             <tr class="mypage-sub-row ${rowBgClass}" style="border-bottom: 1px solid #eee;">

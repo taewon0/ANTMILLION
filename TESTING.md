@@ -25,3 +25,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-Trading.ps1
 보유·체결·실현손익 보존, 실패 시 롤백과 캐시 공개 시점을 확인합니다.
 합성 ZIP·가격 대역을 사용하며 실제 증권사·Redis·스케줄러는 실행하지 않습니다.
 DB 트랜잭션으로 테스트 전체를 감싸지 않고 애플리케이션의 커밋·롤백을 확인한 뒤 합성 데이터를 정리합니다.
+
+관심종목 Controller 테스트는 저장된 등록 정보를 유지하면서 비활성 종목 제외·재등장·페이지 보정·가격 응답 연결을 대역으로 검증합니다.
+체결 조회는 취소 시각과 다른 실제 체결 시각을 반환하는지도 확인합니다.
+
+Node.js가 있으면 체결 탭의 실제 렌더 함수를 DOM 대역으로 검증할 수 있습니다.
+
+```powershell
+node --test scripts/tests/mypage-executions.test.cjs
+```
+
+취소된 부분체결의 체결 탭 노출과 취소 표시, 정상 대기·부분·완료 주문의 필터 동작을 확인합니다.

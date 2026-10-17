@@ -117,6 +117,20 @@ public class StockPreservationTest {
     }
 
     @Test
+    public void cancelledPartialExecutionRetainsActualFillTime() {
+        jdbc.update("UPDATE trade_log SET trade_date='2026-10-16 10:11:12' WHERE order_id=?", partialOrderId);
+        deactivate();
+        assertNotEquals("2026-10-16 10:11:12", jdbc.queryForObject(
+                "SELECT DATE_FORMAT(updated_at,'%Y-%m-%d %H:%i:%s') FROM stock_order WHERE order_id=?",
+                String.class, partialOrderId));
+        com.antmillion.mypage.dto.ExecutedOrdersDTO fill = myPageMapper
+                .selectExecutedOrders(accountId, "2000-01-01", "2100-01-01").stream()
+                .filter(order -> "CANCEL".equals(order.getStatus())).findFirst().orElseThrow(AssertionError::new);
+        assertEquals(2, fill.getExecutedQty());
+        assertEquals("2026-10-16 10:11:12", fill.getExecutedTime());
+    }
+
+    @Test
     public void rejectsEmptyDuplicateAndExcessivelyMissingSnapshotsWithoutChanges() {
         List<Map<String, Object>> original = jdbc.queryForList("SELECT * FROM stock ORDER BY stock_code");
         assertThrows(IllegalArgumentException.class, () -> snapshotService.applySnapshot(Collections.emptyList(), Collections.singletonList(stock("TEST03", "유지"))));

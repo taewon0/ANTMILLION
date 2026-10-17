@@ -62,7 +62,7 @@
                         ), 0)
                  ) * o.order_price) AS "unexecutedAmount",
             tl.trade_price AS "executedPrice",
-            DATE_FORMAT(o.updated_at, '%Y-%m-%d %H:%i:%s') AS "executedTime",
+            DATE_FORMAT(tl.trade_date, '%Y-%m-%d %H:%i:%s') AS "executedTime",
             o.status AS "status"
         FROM stock_order o
                  JOIN stock s ON o.stock_code = s.stock_code
