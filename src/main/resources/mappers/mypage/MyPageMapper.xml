@@ -7,6 +7,7 @@
 	    SELECT
 	        s.stock_name AS "name", 
 	        s.stock_code AS "code",
+            s.active AS "active",
 	        a.quantity AS "shares", 
 	        a.purchase_amount AS "buyPrice",
 	        a.avg_price AS "avgBuyPrice"
@@ -61,7 +62,7 @@
                         ), 0)
                  ) * o.order_price) AS "unexecutedAmount",
             tl.trade_price AS "executedPrice",
-            DATE_FORMAT(o.updated_at, '%Y-%m-%d %H:%i:%s') AS "executedTime",
+            DATE_FORMAT(tl.trade_date, '%Y-%m-%d %H:%i:%s') AS "executedTime",
             o.status AS "status"
         FROM stock_order o
                  JOIN stock s ON o.stock_code = s.stock_code
@@ -69,7 +70,7 @@
         WHERE o.account_id = #{accountId}
           AND o.created_at >= STR_TO_DATE(#{startDate}, '%Y-%m-%d')
           AND o.created_at &lt; DATE_ADD(STR_TO_DATE(#{endDate}, '%Y-%m-%d'), INTERVAL 1 DAY)
-          AND o.status &lt;&gt; 'CANCEL'
+          AND (o.status &lt;&gt; 'CANCEL' OR tl.trade_id IS NOT NULL)
         ORDER BY COALESCE(tl.trade_date, o.updated_at) DESC
     </select>
 	

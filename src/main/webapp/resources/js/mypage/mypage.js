@@ -34,7 +34,7 @@ function connectStompForStockHoldings() {
 // 보유 종목 백엔드 구독 및 STOMP 토픽 구독
 // ===========================
 function subscribeHoldingStocks() {
-    const stockCodes = currentHoldingStocks.map(stock => stock.code);
+    const stockCodes = currentHoldingStocks.filter(stock => stock.active !== false).map(stock => stock.code);
 
     if (stockCodes.length === 0) return;
 
@@ -86,20 +86,21 @@ function subscribeStockTopicForHolding(stockCode) {
 // 실시간 현재가로 주식 잔고 카드 업데이트
 // ===========================
 function updateStockHoldingRealtime(stockCode, tradeData) {
+    const holdingStock = currentHoldingStocks.find(stock => stock.code === stockCode);
+    if (!holdingStock || holdingStock.active === false) return;
     // 해당 종목의 DOM 요소 찾기
     const stockCard = document.querySelector(`.mypage-stock-card[data-code="${stockCode}"]`);
     if (!stockCard) return;
 
     // 현재가 업데이트
     const currentPrice = Number(tradeData.stckPrpr);
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
     const currentPriceElement = stockCard.querySelector('.stock-current-price');
     if (currentPriceElement) {
         currentPriceElement.textContent = currentPrice.toLocaleString() + '원';
     }
 
     // 해당 종목의 보유 정보 찾기
-    const holdingStock = currentHoldingStocks.find(stock => stock.code === stockCode);
-    if (!holdingStock) return;
 
     const shares = holdingStock.shares;
     const buyPrice = holdingStock.buyPrice;
@@ -448,6 +449,16 @@ function loadStockHoldings() {
 // 총 자산 계산 및 업데이트
 // ===========================
 function updateTotalAsset() {
+    if (currentHoldingStocks.some(stock => stock.totalValue == null || stock.profit == null)) {
+        const totalAssetElement = document.getElementById('totalAsset');
+        const totalProfitElement = document.getElementById('totalProfit');
+        if (totalAssetElement) totalAssetElement.textContent = '평가 불가';
+        if (totalProfitElement) {
+            totalProfitElement.className = 'mypage-profit-amount neutral';
+            totalProfitElement.textContent = '평가 불가';
+        }
+        return;
+    }
     // 1. 보유 주식의 총 평가금액, 총 매수금액, 총 수익 계산
     let totalStockValue = 0;  // 보유 주식 총 평가금액
     let totalBuyPrice = 0;     // 총 매수금액
@@ -499,6 +510,7 @@ function renderStockHoldings(holdings) {
     
     // sampleData.stockHoldings 대신 holdings 사용
     stockList.innerHTML = holdings.map(stock => {
+        const canValue = stock.currentPrice != null && stock.totalValue != null && stock.profit != null;
         const profitClass = stock.profit > 0 ? 'positive' : stock.profit < 0 ? 'negative' : 'neutral';
         const profitSign = stock.profit > 0 ? '+' : '';
         
@@ -506,15 +518,15 @@ function renderStockHoldings(holdings) {
         const detailUrl = `${contextPath}/stock/detail?code=${stock.code}`;
         
         return `
-            <div class="mypage-stock-card" data-code="${stock.code}" onclick="location.href='${detailUrl}'" 
-                 style="cursor: pointer;">
+            <div class="mypage-stock-card" data-code="${stock.code}"
+                 ${stock.active === false ? '' : `onclick="location.href='${detailUrl}'" style="cursor: pointer;"`}>
                 <div class="mypage-stock-header">
                     <div>
-                        <div class="mypage-stock-name">${stock.name}</div>
+                        <div class="mypage-stock-name">${stock.name}${stock.active === false ? ' (비활성)' : ''}</div>
                         <div class="mypage-stock-shares">현금 ${stock.shares}주</div>
                     </div>
                     <div class="mypage-stock-profit ${profitClass}">
-                        ${profitSign}${stock.profit.toLocaleString()}원(${profitSign}${stock.profitRate ? stock.profitRate : '0.00'}%)
+                        ${canValue ? `${profitSign}${stock.profit.toLocaleString()}원(${profitSign}${stock.profitRate ? stock.profitRate : '0.00'}%)` : '평가 불가'}
                     </div>
                 </div>
                 <div class="mypage-stock-details">
@@ -528,11 +540,11 @@ function renderStockHoldings(holdings) {
                     </div>
                     <div class="mypage-stock-detail-item">
                         <span class="mypage-detail-label">평가 금액</span>
-                        <span class="mypage-detail-value stock-total-value">${stock.totalValue.toLocaleString()}원</span>
+                        <span class="mypage-detail-value stock-total-value">${canValue ? stock.totalValue.toLocaleString() + '원' : '평가 불가'}</span>
                     </div>
                     <div class="mypage-stock-detail-item">
                         <span class="mypage-detail-label">현재가</span>
-                        <span class="mypage-detail-value stock-current-price">${stock.currentPrice.toLocaleString()}원</span>
+                        <span class="mypage-detail-value stock-current-price">${canValue ? stock.currentPrice.toLocaleString() + '원' : '평가 불가'}</span>
                     </div>
                 </div>
             </div>
@@ -681,10 +693,10 @@ function renderExecutedOrders(filter) {
     const tbody = document.querySelector('#executedTable tbody');
     if (!tbody || !window.executedOrderData) return;
 
-    // 1. 필터링 로직 (ExecutedOrdersDTO의 unexecutedQty 기준)
+    // 체결 이력은 주문의 현재 상태와 무관하게 기체결 수량을 기준으로 표시합니다.
     let filtered = window.executedOrderData;
     if (filter === 'executed') {
-        filtered = window.executedOrderData.filter(o => o.status === 'COMPLETED');
+        filtered = window.executedOrderData.filter(o => o.executedQty > 0);
     } else if (filter === 'unexecuted') {
         filtered = window.executedOrderData.filter(o => o.status === "WAIT" || o.status === "PARTIAL");
     }
@@ -697,6 +709,7 @@ function renderExecutedOrders(filter) {
     // 2. 2줄 구조 HTML 생성
     // map 함수의 두 번째 인자인 i(인덱스)를 사용하여 짝수 세트를 판별합니다.
     tbody.innerHTML = filtered.map((o, i) => {
+        const isCancelled = o.status === 'CANCEL';
         const isBuy = o.type === 'BUY' || o.type === '매수';
         const typeClass = isBuy ? 'mypage-buy-badge' : 'mypage-sell-badge';
         const typeText = isBuy ? '매수' : '매도';
@@ -709,8 +722,8 @@ function renderExecutedOrders(filter) {
                 <td class="mypage-stock-name-cell">${o.stockName}</td>
                 <td>${formatNumber(o.orderQty)}</td>
                 <td>${formatNumber(o.executedQty)}</td>
-                <td>${formatNumber(o.unexecutedQty)}</td>
-                <td>${formatNumber(o.unexecutedAmount)}</td>
+                <td>${isCancelled ? '취소' : formatNumber(o.unexecutedQty)}</td>
+                <td>${isCancelled ? '-' : formatNumber(o.unexecutedAmount)}</td>
                 <td class="time-col">${o.orderTime}</td>
             </tr>
             <tr class="mypage-sub-row ${rowBgClass}" style="border-bottom: 1px solid #eee;">

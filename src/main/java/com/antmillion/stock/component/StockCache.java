@@ -8,14 +8,16 @@ import javax.annotation.PostConstruct;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.stream.Collectors;
 
 @Component
 public class StockCache {
 
     private final StockMapper stockMapper;
-    private final Map<String, StockDTO> cache = new ConcurrentHashMap<>();
+    private volatile Map<String, StockDTO> cache = Collections.emptyMap();
 
     public StockCache(StockMapper stockMapper) {
         this.stockMapper = stockMapper;
@@ -24,10 +26,7 @@ public class StockCache {
     //cache에 미리 DB에서 모든 데이터 로드해두기
     @PostConstruct
     public void init(){
-        stockMapper.findAll().forEach(s -> {
-               cache.put(
-                    s.getStockCode(),
-                    new StockDTO(s.getStockCode(), s.getStockName(), null));});
+        refresh();
     }
 
     //서버에서 필터링하여 결과 전달
@@ -55,11 +54,18 @@ public class StockCache {
 
     // 캐시 갱신 메서드 추가
     public void refresh() {
-        cache.clear();
-        stockMapper.findAll().forEach(s -> {
-            cache.put(
-                    s.getStockCode(),
-                    new StockDTO(s.getStockCode(), s.getStockName(), null));
-        });
+        Map<String, StockDTO> refreshed = Collections.unmodifiableMap(stockMapper.findAll().stream()
+                .collect(Collectors.toMap(StockDTO::getStockCode, s -> s)));
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cache = refreshed;
+                }
+            });
+        } else {
+            cache = refreshed;
+        }
     }
 }

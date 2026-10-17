@@ -31,7 +31,7 @@
                 <span class="info-icon">⚡</span>
                 <div class="info-text">
                     <div class="info-label">동기화 방식</div>
-                    <div class="info-value">신규 추가 + 폐지 종목 삭제</div>
+                    <div class="info-value">신규·재등장 반영 + 누락 종목 비활성화</div>
                 </div>
             </div>
             <div class="info-item">

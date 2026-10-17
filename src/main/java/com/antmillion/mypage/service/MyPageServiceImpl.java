@@ -30,12 +30,19 @@ public class MyPageServiceImpl implements MyPageService {
         
         // 2. 각 DTO별로 API 호출 및 계산 데이터 세팅
         for (StockHoldingsDTO stock : holdings) {
+            if (!stock.isActive()) {
+                continue;
+            }
             CurrentPriceRequest request = CurrentPriceRequest.builder()
                     .marketCode("J")
                     .stockCode(stock.getCode())
                     .build();
             
-            long currentPrice = kisApiService.getCurrentPrice(request);
+            Integer quote = kisApiService.getCurrentPrice(request);
+            if (quote == null || quote <= 0) {
+                continue;
+            }
+            long currentPrice = quote;
             long totalValue = currentPrice * stock.getShares();
             long profit = totalValue - stock.getBuyPrice();
             

@@ -472,7 +472,7 @@ function renderFavoriteStocks() {
 
             // 1. 관심종목이 없는 경우 예외 처리
             if (responseData.totalItems === 0) {
-                container.innerHTML = '<p style="text-align: center; padding: 40px; color: #9CA3AF;">관심종목이 없습니다.</p>';
+                container.innerHTML = '<p style="text-align: center; padding: 40px; color: #9CA3AF;">조회 가능한 관심종목이 없습니다.</p>';
                 document.getElementById('pagination-container')?.remove();
                 currentStockCodes = [];
                 unsubscribeAllStocks();

@@ -102,6 +102,9 @@ CREATE TABLE `realized_pnl` (
   PRIMARY KEY (`real_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Apply the production migration to the pre-migration stock DDL in this disposable DB.
+SOURCE /opt/antmillion-migrations/001-stock-active.sql;
+
 CREATE TABLE test_environment (marker varchar(64) NOT NULL PRIMARY KEY) ENGINE=InnoDB;
 
 INSERT INTO test_environment (marker) VALUES ('antmillion-isolated-test-v1');
