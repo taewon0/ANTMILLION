@@ -30,7 +30,7 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisCredentialAccessTest' t
 ```
 
 실제 SecurityConfig와 보안 필터·합성 JWT로 `/api/kis/auth`, `/api/kis/approval`의
-비로그인·로그인 요청 및 경로·HTTP 메서드 변형을 차단하는지 확인합니다.
-Controller의 인증키 반환 매핑 제거와 기존 지수 조회 응답, 내부 토큰 사용·approval 발급도 확인합니다.
+비로그인·로그인 요청이 매핑 제거로 404를 반환하고 발급 Service를 호출하지 않는지 확인합니다.
+기본 경로와 trailing slash·`.json` 변형, 기존 지수 조회 응답, 내부 토큰 사용·approval 발급을 검증합니다.
 HTTP 요청은 MockRestServiceServer가 처리하고 Redis는 메모리 대역을 사용합니다.
 실제 증권사·DB·Redis에 접속하거나 스케줄러를 실행하지 않으며 실제 WS 연결은 검증하지 않습니다.

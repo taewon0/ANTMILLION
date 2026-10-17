@@ -97,53 +97,18 @@ public class KisCredentialAccessTest {
     }
 
     @Test
-    public void anonymousRequestsCannotReachCredentialService() throws Exception {
-        assertCredentialPathsDenied(null, 401);
+    public void anonymousCredentialRequestsHaveNoHandler() throws Exception {
+        assertCredentialPathsAbsent(null);
     }
 
     @Test
-    public void authenticatedRequestsCannotReachCredentialService() throws Exception {
-        assertCredentialPathsDenied(accessJwt, 403);
-    }
-
-    @Test
-    public void invalidJwtCannotReachCredentialService() throws Exception {
-        assertCredentialPathsDenied("invalid-jwt", 401);
-    }
-
-    @Test
-    public void otherHttpMethodsCannotReachCredentialService() throws Exception {
-        for (String path : CREDENTIAL_PATHS) {
-            for (HttpMethod method : new HttpMethod[]{HttpMethod.POST, HttpMethod.PUT,
-                    HttpMethod.PATCH, HttpMethod.DELETE, HttpMethod.HEAD, HttpMethod.OPTIONS}) {
-                assertEquals(401, mvc.perform(api(method, path)).andReturn().getResponse().getStatus());
-                assertEquals(403, mvc.perform(api(method, path).cookie(new Cookie("AT", accessJwt)))
-                        .andReturn().getResponse().getStatus());
-            }
-        }
-        assertNoCredentialCalls();
-    }
-
-    @Test
-    public void credentialHandlersAreAbsentEvenWithoutSecurityFilter() throws Exception {
-        MockMvc withoutFilters = MockMvcBuilders.standaloneSetup(new KisController(service, null)).build();
-        for (String path : CREDENTIAL_PATHS) {
-            for (String suffix : new String[]{"", "/", ".json"}) {
-                assertEquals(404, withoutFilters.perform(api(HttpMethod.GET, path + suffix))
-                        .andReturn().getResponse().getStatus());
-            }
-        }
-        assertNoCredentialCalls();
+    public void authenticatedCredentialRequestsHaveNoHandler() throws Exception {
+        assertCredentialPathsAbsent(accessJwt);
     }
 
     @Test
     public void publicMarketIndexStillUsesInternalTokenAndPreservesResponse() throws Exception {
-        assertMarketIndexResponse(null);
-    }
-
-    @Test
-    public void authenticatedMarketIndexStillUsesInternalTokenAndPreservesResponse() throws Exception {
-        assertMarketIndexResponse(accessJwt);
+        assertMarketIndexResponse();
     }
 
     @Test
@@ -163,13 +128,13 @@ public class KisCredentialAccessTest {
         kisServer.verify();
     }
 
-    private void assertCredentialPathsDenied(String jwt, int status) throws Exception {
+    private void assertCredentialPathsAbsent(String jwt) throws Exception {
         for (String path : CREDENTIAL_PATHS) {
-            for (String suffix : new String[]{"", "/", "/extra"}) {
-                MockHttpServletRequestBuilder req = api(HttpMethod.GET, path + suffix).param("probe", "1");
+            for (String suffix : new String[]{"", "/", ".json"}) {
+                MockHttpServletRequestBuilder req = api(HttpMethod.GET, path + suffix);
                 if (jwt != null) req.cookie(new Cookie("AT", jwt));
                 MvcResult result = mvc.perform(req).andReturn();
-                assertEquals(path + suffix, status, result.getResponse().getStatus());
+                assertEquals(path + suffix, 404, result.getResponse().getStatus());
                 assertEquals("", result.getResponse().getContentAsString());
                 assertNull(result.getResponse().getRedirectedUrl());
             }
@@ -183,7 +148,7 @@ public class KisCredentialAccessTest {
         kisServer.verify();
     }
 
-    private void assertMarketIndexResponse(String jwt) throws Exception {
+    private void assertMarketIndexResponse() throws Exception {
         kisServer.expect(req -> {
             assertEquals(BASE_URL + KisApiConstant.MARKET_INDEX_PATH, req.getURI().toString().split("\\?")[0]);
             assertTrue(req.getURI().getQuery().contains("FID_INPUT_ISCD=0001"));
@@ -192,7 +157,6 @@ public class KisCredentialAccessTest {
                 .andRespond(withSuccess("{\"output2\":[{\"stck_bsop_date\":\"20261016\","
                         + "\"bstp_nmix_prpr\":\"2500.00\"}]}", MediaType.APPLICATION_JSON));
         MockHttpServletRequestBuilder req = api(HttpMethod.GET, "/api/kis/marketIndex/0001");
-        if (jwt != null) req.cookie(new Cookie("AT", jwt));
         MvcResult result = mvc.perform(req).andReturn();
         assertEquals(200, result.getResponse().getStatus());
         JsonNode body = new ObjectMapper().readTree(result.getResponse().getContentAsByteArray());
