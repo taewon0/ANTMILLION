@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.antmillion.stock.mapper.StockSyncRunMapper">
+    <update id="failAbandonedBefore">
+        UPDATE stock_sync_run SET status = 'FAILED', finished_at = #{finished}, failure_type = 'InterruptedRun'
+        WHERE run_date &lt; #{date} AND status = 'RUNNING'
+    </update>
+    <insert id="insertIfAbsent">
+        INSERT IGNORE INTO stock_sync_run (run_date, run_id, status, attempt_count, started_at)
+        VALUES (#{date}, #{runId}, 'RUNNING', 0, #{started})
+    </insert>
+    <update id="startAttempt">
+        UPDATE stock_sync_run
+        SET run_id = #{runId}, status = 'RUNNING', attempt_count = attempt_count + 1,
+            started_at = #{started}, finished_at = NULL, failure_type = NULL,
+            downloaded_count = NULL, inserted_count = NULL, deactivated_count = NULL, cancelled_order_count = NULL
+        WHERE run_date = #{date} AND status &lt;&gt; 'SUCCEEDED'
+    </update>
+    <select id="lockRun" resultType="string">
+        SELECT run_id FROM stock_sync_run WHERE run_date = #{date} FOR UPDATE
+    </select>
+    <update id="complete">
+        UPDATE stock_sync_run
+        SET status = 'SUCCEEDED', finished_at = #{finished}, failure_type = NULL,
+            downloaded_count = #{result.totalDownloaded}, inserted_count = #{result.insertedCount},
+            deactivated_count = #{result.deactivatedCount}, cancelled_order_count = #{result.cancelledOrderCount}
+        WHERE run_date = #{date} AND run_id = #{runId} AND status = 'RUNNING'
+    </update>
+    <update id="fail">
+        UPDATE stock_sync_run SET status = 'FAILED', finished_at = #{finished}, failure_type = #{failureType}
+        WHERE run_date = #{date} AND run_id = #{runId} AND status = 'RUNNING'
+    </update>
+</mapper>

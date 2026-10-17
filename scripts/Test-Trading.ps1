@@ -22,11 +22,11 @@ try {
         throw 'Disposable test MySQL failed to start.'
     }
 
-    & mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=IsolatedTestDataSourceTest,IsolatedTestDatabaseTest,TradingEngineServiceTest,StockOrderModifyTest,InterestControllerTest,KisStockMasterSourceTest,StockPreservationTest' test
+    & mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=IsolatedTestDataSourceTest,IsolatedTestDatabaseTest,TradingEngineServiceTest,StockOrderModifyTest,InterestControllerTest,KisStockMasterSourceTest,StockPreservationTest,StockSyncSchedulerTest,StockSyncJobTest' test
     $testExitCode = $LASTEXITCODE
 
     # All fixture rows must have rolled back, including after failed tests.
-    $sql = 'SELECT (SELECT COUNT(*) FROM member) + (SELECT COUNT(*) FROM account) + (SELECT COUNT(*) FROM stock) + (SELECT COUNT(*) FROM asset) + (SELECT COUNT(*) FROM stock_order) + (SELECT COUNT(*) FROM trade_log) + (SELECT COUNT(*) FROM realized_pnl);'
+    $sql = 'SELECT (SELECT COUNT(*) FROM member) + (SELECT COUNT(*) FROM account) + (SELECT COUNT(*) FROM stock) + (SELECT COUNT(*) FROM asset) + (SELECT COUNT(*) FROM stock_order) + (SELECT COUNT(*) FROM trade_log) + (SELECT COUNT(*) FROM realized_pnl) + (SELECT COUNT(*) FROM stock_sync_run);'
     $remaining = $sql | & docker @composeArgs exec -T mysql-test sh -c 'MYSQL_PWD=$MYSQL_PASSWORD exec mysql --protocol=TCP -h 127.0.0.1 -u antmillion_test antmillion_test --batch --skip-column-names'
     if ($LASTEXITCODE -ne 0 -or "$remaining".Trim() -ne '0') {
         throw 'Fixture rollback verification failed.'

@@ -15,6 +15,7 @@ services:
     volumes:
       - ./src/test/resources/db/init:/docker-entrypoint-initdb.d:ro
       - ./db_schema/migrations/001-stock-active.sql:/opt/antmillion-migrations/001-stock-active.sql:ro
+      - ./db_schema/migrations/002-stock-sync-run.sql:/opt/antmillion-migrations/002-stock-sync-run.sql:ro
     healthcheck:
       test: ["CMD-SHELL", 'MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP -h 127.0.0.1 -u antmillion_test antmillion_test -Nse "SELECT marker FROM test_environment" | grep -qx antmillion-isolated-test-v1']
       interval: 2s
