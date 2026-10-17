@@ -29,24 +29,6 @@ public class KisController {
     private final KisWebSocketManager kisWebSocketManager;
 
     /**
-     * 한국투자증권 api의 응답을 확인하기위한 컨트롤러
-     * 실제로 사용할 때는 KisService만 사용함
-     */
-
-    @GetMapping("/auth")
-    public String auth() {
-        return kisApiService.getKisAccessToken();
-    }
-    
-    /**
-     * 한국투자증권 실시간 웹소켓 사용을 위한 컨트롤러
-     */
-    @GetMapping("/approval")
-    public String approval() {
-    	return kisApiService.getKisApprovalKey();
-    }
-
-    /**
      * 일봉 : 60일치
      * 주봉 : 52주치
      * 월봉 : 24개월치
