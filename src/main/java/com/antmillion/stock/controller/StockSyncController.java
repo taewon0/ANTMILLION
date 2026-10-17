@@ -43,6 +43,8 @@ public class StockSyncController {
             response.put("afterCount", result.getAfterCount());
             response.put("insertedCount", result.getInsertedCount());
             response.put("deletedCount", result.getDeletedCount());
+            response.put("deactivatedCount", result.getDeactivatedCount());
+            response.put("cancelledOrderCount", result.getCancelledOrderCount());
             response.put("totalDownloaded", result.getTotalDownloaded());
             response.put("executionTimeMs", result.getExecutionTimeMs());
             response.put("executionTimeSec", result.getExecutionTimeMs() / 1000.0);

@@ -71,8 +71,8 @@ function showSuccessResult(data) {
             <span class="result-value success">+${data.insertedCount.toLocaleString()}개</span>
         </div>
         <div class="result-row">
-            <span class="result-label">🗑️ 삭제된 종목</span>
-            <span class="result-value error">-${data.deletedCount.toLocaleString()}개</span>
+            <span class="result-label">비활성화된 종목</span>
+            <span class="result-value error">${data.deactivatedCount.toLocaleString()}개</span>
         </div>
         <div class="result-row">
             <span class="result-label">📊 동기화 후 종목 수</span>

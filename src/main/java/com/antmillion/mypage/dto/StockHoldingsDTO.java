@@ -18,8 +18,9 @@ public class StockHoldingsDTO {
     private long buyPrice;         // 총 매수금액 (DB)
     private long avgBuyPrice;      // 평균 단가 (DB)
     
-    private long currentPrice;     // 현재가 (API 계산)
-    private long totalValue;       // 평가금액 (계산: 현재가 * 수량)
-    private long profit;           // 평가손익 (계산: 평가금액 - 매수금액)
-    private double profitRate;     // 수익률 (계산)
+    private boolean active;
+    private Long currentPrice;     // 평가 불가 시 null
+    private Long totalValue;
+    private Long profit;
+    private Double profitRate;
 }

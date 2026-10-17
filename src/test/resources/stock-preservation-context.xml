@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans https://www.springframework.org/schema/beans/spring-beans.xsd">
+    <import resource="order-modify-context.xml"/>
+    <bean id="stockCache" class="com.antmillion.stock.component.StockCache" init-method="init">
+        <constructor-arg ref="stockMapper"/>
+    </bean>
+    <bean id="stockSnapshotService" class="com.antmillion.stock.service.StockSnapshotService">
+        <constructor-arg ref="stockSyncMapper"/>
+        <constructor-arg ref="stockCache"/>
+        <constructor-arg ref="transactionManager"/>
+        <!-- Small synthetic snapshots deliberately remove more than the production limit. -->
+        <constructor-arg value="0"/>
+    </bean>
+    <bean id="myPageMapper" class="org.mybatis.spring.mapper.MapperFactoryBean">
+        <property name="mapperInterface" value="com.antmillion.mypage.mapper.MyPageMapper"/>
+        <property name="sqlSessionFactory" ref="sqlSessionFactory"/>
+    </bean>
+</beans>

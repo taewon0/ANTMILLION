@@ -1,45 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-
 <mapper namespace="com.antmillion.stock.mapper.StockSyncMapper">
-
-    <update id="truncateTemp">
-        TRUNCATE temp_stock
-    </update>
-
-    <insert id="insertTempStock">
-        INSERT IGNORE INTO temp_stock(stock_code, stock_name)
-        VALUES(#{stockCode}, #{stockName})
-        ON DUPLICATE KEY UPDATE stock_name = VALUES(stock_name)
-    </insert>
-
-    <insert id="insertTempStockBatch">
-        INSERT IGNORE INTO temp_stock(stock_code, stock_name)
-        VALUES
-        <foreach collection="list" item="stock" separator=",">
-            (#{stock.stockCode}, #{stock.stockName})
-        </foreach>
-        ON DUPLICATE KEY UPDATE stock_name = VALUES(stock_name)
-    </insert>
-
-    <insert id="insertNewStocks">
-        INSERT INTO stock(stock_code, stock_name)
-        SELECT t.stock_code, t.stock_name
-        FROM temp_stock t
-                 LEFT JOIN stock s ON t.stock_code = s.stock_code
-        WHERE s.stock_code IS NULL
-    </insert>
-
-    <delete id="deleteOldStocks">
-        DELETE s
-        FROM stock s
-                 LEFT JOIN temp_stock t ON s.stock_code = t.stock_code
-        WHERE t.stock_code IS NULL
-    </delete>
-
-    <select id="countStock" resultType="int">
-        SELECT COUNT(*) FROM stock
+    <select id="selectAllCodesForUpdate" resultType="string">
+        SELECT stock_code FROM stock ORDER BY stock_code FOR UPDATE
     </select>
-
+    <select id="selectActiveCodes" resultType="string">
+        SELECT stock_code FROM stock WHERE active = 1
+    </select>
+    <insert id="upsertStocks">
+        INSERT INTO stock (stock_code, stock_name, active) VALUES
+        <foreach collection="list" item="stock" separator=",">
+            (#{stock.stockCode}, #{stock.stockName}, 1)
+        </foreach>
+        ON DUPLICATE KEY UPDATE stock_name = VALUES(stock_name), active = 1
+    </insert>
+    <update id="deactivateMissing">
+        UPDATE stock SET active = 0
+        WHERE active = 1 AND stock_code NOT IN
+        <foreach collection="list" item="code" open="(" close=")" separator=",">
+            #{code}
+        </foreach>
+    </update>
+    <update id="cancelInactiveOrders">
+        UPDATE stock_order o JOIN stock s ON s.stock_code = o.stock_code
+        SET o.status = 'CANCEL', o.updated_at = NOW()
+        WHERE s.active = 0 AND o.status IN ('WAIT', 'PARTIAL')
+    </update>
+    <select id="countStock" resultType="int">
+        SELECT COUNT(*) FROM stock WHERE active = 1
+    </select>
 </mapper>
