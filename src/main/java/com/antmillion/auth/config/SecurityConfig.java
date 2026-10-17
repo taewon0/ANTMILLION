@@ -45,6 +45,9 @@ public class SecurityConfig {
 			.httpBasic(basic -> basic.disable())
 			.sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(auth -> auth
+					// KIS 인증키는 서버 내부에서만 사용
+					.requestMatchers(new AntPathRequestMatcher("/api/kis/auth/**"),
+							new AntPathRequestMatcher("/api/kis/approval/**")).denyAll()
 					// 로그인 필요
 					.requestMatchers(new AntPathRequestMatcher("/mypage/**")).authenticated()
 					.requestMatchers(new AntPathRequestMatcher("/mission/**")).authenticated()
