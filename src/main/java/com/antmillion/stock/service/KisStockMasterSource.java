@@ -56,8 +56,12 @@ public class KisStockMasterSource {
                     if ("EW".equals(group)) {
                         continue;
                     }
-                    if (!code.matches("[A-Za-z0-9]{6}") || name.isEmpty() || name.length() > 100) {
+                    if (!code.matches("[A-Za-z0-9]{6,9}") || name.isEmpty() || name.length() > 100) {
                         throw new IOException("종목 코드 또는 이름이 올바르지 않습니다.");
+                    }
+                    // The master also contains longer bond/ETN/rights codes outside our six-character universe.
+                    if (code.length() != 6) {
+                        continue;
                     }
                     result.add(StockDTO.builder().stockCode(code).stockName(name).build());
                 }

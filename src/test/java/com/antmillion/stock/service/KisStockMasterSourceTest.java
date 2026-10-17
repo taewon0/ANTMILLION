@@ -30,6 +30,23 @@ public class KisStockMasterSourceTest {
     }
 
     @Test
+    public void skipsValidLongCodesWithoutRejectingTheSupportedUniverse() throws Exception {
+        for (String market : Arrays.asList("KOSPI", "KOSDAQ")) {
+            String rows = record("F70100034", "합성채권", market, "BC") + "\n"
+                    + record("TEST001", "합성장외코드", market, "EN") + "\n"
+                    + record("TEST0001", "합성권리", market, "SR") + "\n"
+                    + record("TEST01", "합성종목", market, "ST") + "\n";
+            List<StockDTO> stocks = source(archive(market.toLowerCase() + "_code.mst", rows)).loadStocks(market);
+            assertEquals(1, stocks.size());
+            assertEquals("TEST01", stocks.get(0).getStockCode());
+        }
+        byte[] excludedOnly = archive("kospi_code.mst", record("F70100034", "합성채권", "KOSPI", "BC"));
+        assertThrows(IOException.class, () -> source(excludedOnly).loadStocks("KOSPI"));
+        byte[] malformed = archive("kospi_code.mst", record("BAD!00001", "합성오류", "KOSPI", "BC"));
+        assertThrows(IOException.class, () -> source(malformed).loadStocks("KOSPI"));
+    }
+
+    @Test
     public void rejectsEmptyMalformedAndUnsupportedRecords() throws Exception {
         for (String row : Arrays.asList("", "broken\n", record("TEST01", "", "KOSPI", "ST"),
                 record("bad!", "잘못된코드", "KOSPI", "ST"))) {

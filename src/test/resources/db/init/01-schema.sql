@@ -104,6 +104,7 @@ CREATE TABLE `realized_pnl` (
 
 -- Apply the production migration to the pre-migration stock DDL in this disposable DB.
 SOURCE /opt/antmillion-migrations/001-stock-active.sql;
+SOURCE /opt/antmillion-migrations/002-stock-sync-run.sql;
 
 CREATE TABLE test_environment (marker varchar(64) NOT NULL PRIMARY KEY) ENGINE=InnoDB;
 
@@ -126,5 +127,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON antmillion_test.stock_order TO 'antmilli
 GRANT SELECT, INSERT, UPDATE, DELETE ON antmillion_test.trade_log TO 'antmillion_test'@'%';
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON antmillion_test.realized_pnl TO 'antmillion_test'@'%';
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON antmillion_test.stock_sync_run TO 'antmillion_test'@'%';
 
 GRANT SELECT ON antmillion_test.test_environment TO 'antmillion_test'@'%';

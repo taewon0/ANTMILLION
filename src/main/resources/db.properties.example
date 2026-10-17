@@ -27,3 +27,8 @@ mail.smtp.ssl.trust=VALUE
 mail.debug=false
 mail.verify.code-ttl-seconds=300
 mail.verify.verified-ttl-seconds=1800
+
+# Daily stock sync: explicitly enable only after applying migrations 001 and 002.
+stock.sync.enabled=false
+stock.sync.cron=0 0 18 * * *
+stock.sync.zone=Asia/Seoul
