@@ -20,17 +20,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-Trading.ps1
 주문 정정 테스트는 인증 대역과 실제 Controller / Service / Mapper를 사용합니다.
 비로그인·타 계좌·입력 오류·정정 불가 상태의 변경 차단과 본인 주문의 정상 정정을 확인합니다.
 전체 보안 필터·JWT·브라우저 동작이나 동시 체결과의 경쟁을 검증하는 테스트는 아닙니다.
-
-## KIS 인증키 접근 차단 테스트
-
-다음 명령은 DB나 Docker 없이 이 테스트만 실행합니다.
-
-```powershell
-mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisCredentialAccessTest' test
-```
-
-실제 SecurityConfig와 보안 필터·합성 JWT로 `/api/kis/auth`, `/api/kis/approval`의
-비로그인·로그인 요청이 매핑 제거로 404를 반환하고 발급 Service를 호출하지 않는지 확인합니다.
-기본 경로와 trailing slash·`.json` 변형, 기존 지수 조회 응답, 내부 토큰 사용·approval 발급을 검증합니다.
-HTTP 요청은 MockRestServiceServer가 처리하고 Redis는 메모리 대역을 사용합니다.
-실제 증권사·DB·Redis에 접속하거나 스케줄러를 실행하지 않으며 실제 WS 연결은 검증하지 않습니다.
