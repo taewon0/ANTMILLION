@@ -51,6 +51,7 @@
         <constructor-arg ref="tradeLogMapper"/>
         <constructor-arg ref="assetMapper"/>
         <constructor-arg ref="realizedPnlMapper"/>
+        <constructor-arg ref="transactionManager"/>
     </bean>
 
 </beans>

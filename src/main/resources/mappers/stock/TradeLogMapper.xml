@@ -3,7 +3,7 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.antmillion.stock.mapper.TradeLogMapper">
 
-    <insert id="insertTradeLog" useGeneratedKeys="true" keyProperty="tradeId">
+    <insert id="insertTradeLog" useGeneratedKeys="true" keyProperty="tradeId" keyColumn="trade_id">
         INSERT INTO trade_log (
             order_id, 
             trade_date, 
@@ -16,9 +16,6 @@
             #{tradePrice}, 
             #{tradeQuantity}
         )
-        <selectKey keyProperty="tradeId" resultType="long" order="AFTER">
-            SELECT LAST_INSERT_ID() AS tradeId
-        </selectKey>
     </insert>
 
     <select id="getTotalExecutedQty" resultType="int">

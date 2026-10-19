@@ -5,29 +5,44 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import com.antmillion.stock.dto.AssetDTO;
+import com.antmillion.stock.dto.TradeLogDTO;
 import com.antmillion.stock.mapper.RealizedPnlMapper;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.antmillion.stock.dto.StockOrderResponseDTO;
 import com.antmillion.stock.mapper.AssetMapper;
 import com.antmillion.stock.mapper.StockOrderMapper;
 import com.antmillion.stock.mapper.TradeLogMapper;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TradingEngineService {
     private final StockOrderMapper stockOrderMapper;
     private final TradeLogMapper tradeLogMapper;
     private final AssetMapper assetMapper;
     private final RealizedPnlMapper realizedPnlMapper;
+    private final TransactionTemplate transaction;
 
-    @Transactional
+    public TradingEngineService(StockOrderMapper stockOrderMapper, TradeLogMapper tradeLogMapper,
+            AssetMapper assetMapper, RealizedPnlMapper realizedPnlMapper,
+            PlatformTransactionManager transactionManager) {
+        this.stockOrderMapper = stockOrderMapper;
+        this.tradeLogMapper = tradeLogMapper;
+        this.assetMapper = assetMapper;
+        this.realizedPnlMapper = realizedPnlMapper;
+        this.transaction = new TransactionTemplate(transactionManager);
+    }
+
     public void processExecution(String stockCode, int currentPrice, int availableQty) {
+        // 기존 메서드 경계를 유지하며, annotation 활성화 여부와 무관하게 한 호출 전체를 롤백합니다.
+        transaction.executeWithoutResult(status -> executeOrders(stockCode, currentPrice, availableQty));
+    }
+
+    private void executeOrders(String stockCode, int currentPrice, int availableQty) {
         // 체결 가능한 주문 리스트 
         List<StockOrderResponseDTO> orders = stockOrderMapper.findExecutableOrders(stockCode, currentPrice);
         
@@ -40,8 +55,14 @@ public class TradingEngineService {
             // 이번에 체결할 수량 (시장 물량 vs 주문 미체결량 중 최소값)
             int actualExecQty = Math.min(unexecutedQty, remainingMarketQty);
 
-            // 1. 체결 로그(trade_log) 기록 (trade_id 반환 필요)
-            Long tradeId = tradeLogMapper.insertTradeLog(order.getOrderId(), currentPrice, actualExecQty);
+            // 1. INSERT 영향 행 수와 생성된 체결 ID를 구분합니다.
+            TradeLogDTO trade = TradeLogDTO.builder().orderId(order.getOrderId())
+                    .tradePrice((long) currentPrice).tradeQuantity(actualExecQty).build();
+            int inserted = tradeLogMapper.insertTradeLog(trade);
+            Long tradeId = trade.getTradeId();
+            if (inserted != 1 || tradeId == null || tradeId <= 0) {
+                throw new IllegalStateException("체결 기록 또는 생성 ID 확인 실패");
+            }
 
             // 3. 주문 상태 업데이트 (누적 체결량 다시 확인하여 상태 변경)
             int totalExecutedSoFar = order.getExecutedQuantity() + actualExecQty;
@@ -54,7 +75,7 @@ public class TradingEngineService {
             	// minusBalance의 리턴값(영향받은 행 수)을 확인해서 잔액 부족 체크 필수
             	int rows = assetMapper.minusBalance(order.getAccountId(), tradeAmount);
                 if (rows == 0) {
-                    // 잔액이 부족하면 런타임 예외를 던져서 이 주문 전체를 롤백(Rollback)시킴
+                    // 잔액이 부족하면 이번 호출에서 처리한 앞선 주문까지 함께 롤백합니다.
                     throw new RuntimeException("잔액 부족으로 체결 불가");
                 }
                 assetMapper.upsertAssetBuy(order.getAccountId(), stockCode, actualExecQty, currentPrice, tradeAmount);
