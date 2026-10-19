@@ -1,5 +1,6 @@
 package com.antmillion.stock.mapper;
 
+import com.antmillion.stock.dto.TradeLogDTO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -7,11 +8,9 @@ import org.apache.ibatis.annotations.Param;
 public interface TradeLogMapper {
 
     /**
-     * trade_log 테이블에 새로운 체결 행 삽입 (주문 ID, 체결 시간, 체결가, 체결 수량)
+     * 영향 행 수를 반환하며 생성된 tradeId는 전달한 DTO에 설정합니다.
      */
-    Long insertTradeLog(@Param("orderId") Long orderId,
-                       @Param("tradePrice") long tradePrice,
-                       @Param("tradeQuantity") int tradeQuantity);
+    int insertTradeLog(TradeLogDTO trade);
 
     /**
      * 특정 주문번호(order_id)에 대해 지금까지 체결된 총 수량 조회
