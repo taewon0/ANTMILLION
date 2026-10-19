@@ -2,6 +2,7 @@ package com.antmillion.kis.controller;
 
 import com.antmillion.kis.service.MockDataService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -9,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
+@Profile("dev-mock")
 @RequestMapping("/api/kis/mock")
 @RequiredArgsConstructor
 public class MockDataController {
