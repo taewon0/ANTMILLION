@@ -1,8 +1,11 @@
 package com.antmillion.kis.service;
 
 import lombok.Getter;
+import org.springframework.context.annotation.Profile;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+
+import javax.annotation.PreDestroy;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -10,13 +13,14 @@ import java.util.Random;
 import java.util.concurrent.*;
 
 @Service
+@Profile("dev-mock")
 public class MockDataService {
     private final SimpMessagingTemplate messagingTemplate;
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> scheduledTask; //추가: 스케줄된 작업 참조
     private final Map<String, MockStockData> mockStocks = new ConcurrentHashMap<>();
     private final Random random = new Random();
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
 
     public MockDataService(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
@@ -43,7 +47,7 @@ public class MockDataService {
     }
 
     // Mock 데이터 전송 시작
-    public void startMockData() {
+    public synchronized void startMockData() {
         if (isRunning) {
             System.out.println("Mock 데이터가 이미 실행 중입니다.");
             return;
@@ -76,7 +80,8 @@ public class MockDataService {
     }
 
     // Mock 데이터 전송 중지
-    public void stopMockData() {
+    @PreDestroy
+    public synchronized void stopMockData() {
         if (!isRunning) {
             System.out.println("Mock 데이터가 실행 중이지 않습니다.");
             return;

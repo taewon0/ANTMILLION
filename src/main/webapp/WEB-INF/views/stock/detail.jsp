@@ -1,5 +1,6 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8"
     pageEncoding="UTF-8"%>
+<%@ taglib prefix="spring" uri="http://www.springframework.org/tags" %>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -250,6 +251,8 @@
     <!-- Adding the standalone version of Lightweight charts -->
     <script
         src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <spring:eval expression="@environment.acceptsProfiles('dev-mock')" var="kisMockEnabled" />
+    <script>window.kisMockEnabled = ${kisMockEnabled};</script>
     <script src="${cpath}/resources/js/stock/detail.js"></script>
 </body>
 </html>

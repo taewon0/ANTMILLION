@@ -146,10 +146,7 @@ function subscribeCurrentStocks() {
     // Mock 모드일 때는 한투 백엔드 구독 건너뛰고 STOMP만 구독
     if (isMockMode) {
         console.log('Mock 모드 - STOMP 구독만 진행');
-        currentStockCodes.forEach(stockCode => {
-            subscribeStockTopic(stockCode);
-        });
-        return;
+        return enableMockMode();
     }
 
     // 프론트엔드 STOMP 구독을 먼저 시작
@@ -202,7 +199,7 @@ function subscribeCurrentStocks() {
 
 // ========== 백엔드 구독만 재시도하는 함수 (새로 추가) ==========
 function retryBackendSubscription(stockCodes) {
-    if (stockCodes.length === 0 || !stompConnected) return;
+    if (isMockMode || stockCodes.length === 0 || !stompConnected) return;
 
     fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNCNT0', {
         method: 'POST',
@@ -330,7 +327,7 @@ function unsubscribeAllStocks() {
     unsubscribeFrontendOnly();
 
     // 백엔드 구독 해제
-    if (currentStockCodes.length > 0) {
+    if (!isMockMode && currentStockCodes.length > 0) {
         fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0UNCNT0', {
             method: 'POST',
             headers: {
@@ -850,113 +847,72 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ========== Mock 데이터 제어 함수 ==========
 
-let isMockMode = false; // Mock 모드 플래그
+// 개발 프로필에서만 mock 모드를 사용합니다. 중지 후에도 실제 KIS 구독으로 전환하지 않습니다.
+const isMockMode = window.kisMockEnabled === true;
 
-// Mock 모드로 전환 (한투 구독 건너뛰고 Mock만 사용)
-function enableMockMode() {
-    isMockMode = true;
-    console.log('Mock 모드 활성화');
-
-    // 현재 화면에 표시된 종목 리스트 가져오기
-    const stockItems = document.querySelectorAll('.stocklist-item');
-    const mockStocks = [];
-
-    stockItems.forEach(item => {
-        const stockCode = item.getAttribute('data-code');
-        const priceText = item.querySelector('.stocklist-price').textContent;
-        const basePrice = parseInt(priceText.replace(/[^0-9]/g, ''));
-
-        mockStocks.push({
-            stockCode: stockCode,
-            basePrice: basePrice
-        });
-    });
-
-    // Mock 종목 등록
-    fetch(contextPath + '/api/kis/mock/add-stocks', {
+async function mockRequest(path, stocks) {
+    if (!isMockMode) throw new Error('dev-mock 프로필에서만 사용할 수 있습니다.');
+    const options = path === '/status' ? {} : {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(mockStocks)
-    })
-        .then(res => res.json())
-        .then(response => {
-            console.log('Mock 종목 등록:', response);
-
-            // Mock 데이터 전송 시작
-            return fetch(contextPath + '/api/kis/mock/start', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-        })
-        .then(res => res.json())
-        .then(response => {
-            console.log('Mock 데이터 시작:', response);
-
-            // STOMP 구독만 진행 (한투 백엔드 구독은 건너뜀)
-            const stockCodes = mockStocks.map(s => s.stockCode);
-            stockCodes.forEach(stockCode => {
-                subscribeStockTopic(stockCode);
-            });
-
-            alert('테스트 모드 시작! 한투 연결 없이 가짜 데이터로 테스트합니다.');
-        })
-        .catch(error => {
-            console.error('Mock 모드 활성화 실패:', error);
-        });
+        headers: { 'Content-Type': 'application/json' }
+    };
+    if (stocks) options.body = JSON.stringify(stocks);
+    const response = await fetch(contextPath + '/api/kis/mock' + path, options);
+    if (!response.ok) throw new Error('Mock 요청 실패: ' + response.status);
+    const data = await response.json();
+    if (data.success === false) throw new Error(data.message);
+    return data;
 }
 
-// Mock 모드 비활성화
-function disableMockMode() {
-    isMockMode = false;
-
-    // Mock 데이터 중지
-    fetch(contextPath + '/api/kis/mock/stop', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-        .then(res => res.json())
-        .then(response => {
-            console.log('Mock 데이터 중지:', response);
-
-            // Mock 종목 제거
-            return fetch(contextPath + '/api/kis/mock/clear', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-        })
-        .then(res => res.json())
-        .then(response => {
-            console.log('Mock 종목 제거:', response);
-            alert('테스트 모드 종료! 실제 모드로 전환하려면 페이지를 새로고침하세요.');
-        })
-        .catch(error => {
-            console.error('Mock 모드 비활성화 실패:', error);
+// 종목은 현재 화면에서 읽고, STOMP 토픽 구독 후 방송을 시작합니다.
+async function enableMockMode() {
+    try {
+        if (!isMockMode) throw new Error('dev-mock 프로필에서만 사용할 수 있습니다.');
+        if (!stompClient || !stompClient.connected) throw new Error('STOMP 연결이 필요합니다.');
+        const mockStocks = Array.from(document.querySelectorAll('.stocklist-item')).map(item => {
+            const price = Number(item.querySelector('.stocklist-price').textContent.replace(/[^0-9]/g, ''));
+            return {
+                stockCode: item.getAttribute('data-code'),
+                basePrice: Number.isSafeInteger(price) && price > 0 ? price : 10000
+            };
         });
+        if (mockStocks.length === 0) throw new Error('화면에 mock 대상 종목이 없습니다.');
+        await mockRequest('/add-stocks', mockStocks);
+        mockStocks.forEach(stock => subscribeStockTopic(stock.stockCode));
+        const response = await mockRequest('/start');
+        if (!response.isRunning) throw new Error('Mock 방송을 시작하지 못했습니다.');
+        console.log('Mock 데이터 시작:', response);
+        return true;
+    } catch (error) {
+        console.error('Mock 모드 활성화 실패:', error);
+        return false;
+    }
 }
 
-// Mock 상태 확인
-function checkMockStatus() {
-    fetch(contextPath + '/api/kis/mock/status')
-        .then(res => res.json())
-        .then(response => {
-            console.log('Mock 상태:', response.isRunning ? '실행 중' : '중지됨');
-            console.log('Mock 종목 수:', response.stockCount);
-            alert('테스트 데이터 상태: ' + (response.isRunning ? '실행 중' : '중지됨') + '\n종목 수: ' + response.stockCount);
-        })
-        .catch(error => {
-            console.error('Mock 상태 확인 실패:', error);
-        });
+async function disableMockMode() {
+    try {
+        await mockRequest('/stop');
+        await mockRequest('/clear');
+        console.log('Mock 데이터 중지 완료. 다시 시작하려면 enableMockMode()를 호출하세요.');
+        return true;
+    } catch (error) {
+        console.error('Mock 모드 비활성화 실패:', error);
+        return false;
+    }
 }
 
-// 브라우저 콘솔에서 사용 가능하도록 전역으로 노출
+async function checkMockStatus() {
+    try {
+        const response = await mockRequest('/status');
+        console.log('Mock 상태:', response);
+        return response;
+    } catch (error) {
+        console.error('Mock 상태 확인 실패:', error);
+        return null;
+    }
+}
+
+// 기존 개발 콘솔 진입점은 유지하며 서버 프로필이 없으면 요청하지 않습니다.
 window.enableMockMode = enableMockMode;
 window.disableMockMode = disableMockMode;
 window.checkMockStatus = checkMockStatus;
