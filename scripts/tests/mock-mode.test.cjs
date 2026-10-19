@@ -124,10 +124,10 @@ for (const page of ['stocklist/stocklist.js', 'stock/detail.js']) {
         assert.deepEqual(requests.map(r => r.url.split('/').pop()), ['stop', 'clear', 'status', 'add-stocks', 'start']);
     });
 
-    test(page + ': 일반 모드의 KIS 구독 경로 유지', async () => {
+    test(page + ': 일반 모드는 HTTP 없이 기존 STOMP 토픽으로 구독', async () => {
         const { context, requests } = screen(page, false, undefined, true);
         await context.subscribeCurrentStocks();
-        assert.equal(requests.length, page.startsWith('stocklist/') ? 1 : 2);
-        assert(requests.every(r => r.url.includes('/api/kis/websocket/subscribe-multiple?trId=')));
+        assert.equal(requests.length, 0);
+        assert(context.subscribedTopics.TEST01, '현재가 토픽을 구독해야 합니다.');
     });
 }

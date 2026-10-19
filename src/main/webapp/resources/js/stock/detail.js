@@ -140,63 +140,14 @@ function handleReconnect() {
     }, 5000);
 }
 
-// ======= 현재 상세 화면 종목 및 호가 구독 (시간차 적용 버전) =======
+// ======= 현재 상세 화면 종목 및 호가 STOMP 구독 =======
 async function subscribeCurrentStocks() {
-
-    if (currentStockCodes.length === 0) return;
-
-    // Mock 모드일 때는 한투 백엔드 구독 건너뛰고 STOMP만 구독
-    if (isMockMode) {
-        console.log('Mock 모드 - STOMP 구독 진행');
-        return enableMockMode();
-    }
-
-    try {
-        // 1. 현재가 구독 요청 (H0UNCNT0)
-        console.log('[1/4] 현재가 구독 요청 시작...');
-        const presentRes = await fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNCNT0', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(currentStockCodes)
-        });
-
-        if (!presentRes.ok) {
-            throw new Error('현재가 구독 실패: ' + presentRes.status);
-        }
-
-        console.log('[2/4] 현재가 구독 완료. 안정화 대기 중...');
-
-        // 백엔드 안정화 대기 (순차 처리이므로 700ms면 충분)
-        await new Promise(resolve => setTimeout(resolve, 700));
-
-        // 2. 호가 구독 요청 (H0UNASP0)
-        console.log('[3/4] 호가 구독 요청 시작...');
-        const hogaRes = await fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNASP0', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(currentStockCodes)
-        });
-
-        if (!hogaRes.ok) {
-            throw new Error('호가 구독 실패: ' + hogaRes.status);
-        }
-
-        console.log('[4/4] 호가 구독 완료. STOMP 토픽 구독 시작...');
-
-        // 추가 안정화 대기
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // 3. 프론트엔드 STOMP 구독
-        currentStockCodes.forEach(stockCode => {
-            subscribeStockTopic(stockCode);
-            subscribeStockHoga(stockCode);
-        });
-
-        console.log('최종 STOMP 구독 프로세스 완료');
-
-    } catch (error) {
-        console.error('구독 프로세스 중 에러 발생:', error);
-    }
+    if (!stompClient || !stompClient.connected || currentStockCodes.length === 0) return;
+    if (isMockMode) return enableMockMode();
+    currentStockCodes.forEach(stockCode => {
+        subscribeStockTopic(stockCode);
+        subscribeStockHoga(stockCode);
+    });
 }
 
 // ========== 개별 종목 STOMP 토픽 구독 ==========
@@ -363,40 +314,6 @@ function unsubscribeAllStocks() {
         }
     }
     subscribedTopics = {};
-
-    // 백엔드 구독 해제
-    if (!isMockMode && currentStockCodes.length > 0) {
-        fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0UNCNT0', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            keepalive: true
-        })
-            .then(res => res.json())
-            .then(response => {
-                console.log('백엔드 구독 해제 완료:', response);
-            })
-            .catch(error => {
-                console.error('백엔드 구독 해제 실패:', error);
-            });
-
-        // 호가 (H0UNASP0) 구독 해제
-        fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0UNASP0', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            keepalive: true
-        })
-            .then(res => res.json())
-            .then(response => {
-                console.log('호가 백엔드 구독 해제 완료:', response);
-            })
-            .catch(error => {
-                console.error('호가 백엔드 구독 해제 실패:', error);
-            });
-    }
 }
 
 // ========== 호가 데이터 수신 및 UI 업데이트 ==========
