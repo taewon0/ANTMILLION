@@ -17,7 +17,6 @@ let subscribedTopics = {}; // 구독한 토픽 저장 {stockCode: subscription}
 let currentStockCodes = []; // 현재 화면에 표시된 종목 코드들
 let stompConnected = false; // STOMP 연결 상태 플래그 추가
 let pendingSubscription = false; // 대기 중인 구독 요청 플래그
-let currentFetchController = null; // fetch 요청 취소용
 
 // =====================================================
 // 로그인 상태 체크 + "로그인이 필요합니다" 모달
@@ -123,106 +122,18 @@ function connectStomp() {
 
 // ========== 현재 화면 종목들 구독 ==========
 function subscribeCurrentStocks() {
-    // STOMP 연결 확인
     if (!stompClient || !stompConnected) {
-        console.warn('STOMP 미연결 - 구독 대기 중...');
         pendingSubscription = true;
         return;
     }
-
-    if (currentStockCodes.length === 0) {
-        console.log('구독할 종목이 없음');
-        return;
-    }
-
-    // 이전 fetch 요청 취소
-    if (currentFetchController) {
-        currentFetchController.abort();
-    }
-
-    // 기존 구독 해제
+    // STOMP 해제/구독 이벤트가 이 연결의 KIS 참조도 함께 정리합니다.
     unsubscribeFrontendOnly();
-
-    // Mock 모드일 때는 한투 백엔드 구독 건너뛰고 STOMP만 구독
-    if (isMockMode) {
-        console.log('Mock 모드 - STOMP 구독만 진행');
-        return enableMockMode();
-    }
-
-    // 프론트엔드 STOMP 구독을 먼저 시작
-    // 백엔드 응답을 기다리지 않고 즉시 토픽 구독
-    console.log('[최적화] 프론트 구독 즉시 시작 (' + currentStockCodes.length + '개)');
-    currentStockCodes.forEach(stockCode => {
-        subscribeStockTopic(stockCode);
-    });
-
-    // 새로운 AbortController 생성
-    currentFetchController = new AbortController();
-
-    // 백엔드 구독은 비동기로 병렬 실행
-    // 프론트는 이미 구독 중이므로 백엔드 완료되면 즉시 데이터 수신 가능
-    fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNCNT0', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(currentStockCodes),
-        signal: currentFetchController.signal
-    })
-        .then(res => {
-            if (!res.ok) {
-                throw new Error('백엔드 구독 응답 실패: ' + res.status);
-            }
-            return res.json();
-        })
-        .then(response => {
-            console.log('[백엔드] 한투 구독 완료:', response);
-            // 이 시점부터 한투 API가 데이터를 보내기 시작
-            // 프론트는 이미 구독 중이므로 즉시 수신 가능
-        })
-        .catch(error => {
-            // Abort 에러는 무시 (의도적 취소)
-            if (error.name === 'AbortError') {
-                console.log('이전 구독 요청 취소됨');
-                return;
-            }
-
-            console.error('[백엔드] 구독 실패:', error);
-
-            // 백엔드 구독 실패 시 재시도
-            setTimeout(() => {
-                console.log('[백엔드] 구독 재시도...');
-                retryBackendSubscription(currentStockCodes);
-            }, 2000);
-        });
+    if (currentStockCodes.length === 0) return;
+    if (isMockMode) return enableMockMode();
+    currentStockCodes.forEach(stockCode => subscribeStockTopic(stockCode));
 }
 
-// ========== 백엔드 구독만 재시도하는 함수 (새로 추가) ==========
-function retryBackendSubscription(stockCodes) {
-    if (isMockMode || stockCodes.length === 0 || !stompConnected) return;
-
-    fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNCNT0', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(stockCodes)
-    })
-        .then(res => {
-            if (!res.ok) {
-                throw new Error('백엔드 재구독 실패: ' + res.status);
-            }
-            return res.json();
-        })
-        .then(response => {
-            console.log('[백엔드] 재구독 완료:', response);
-        })
-        .catch(error => {
-            console.error('[백엔드] 재구독 실패:', error);
-        });
-}
-
-// ========== 프론트엔드 구독만 해제 (백엔드는 유지) ==========
+// ========== 이 연결의 종목 구독 해제 ==========
 function unsubscribeFrontendOnly() {
     console.log('프론트엔드 구독 해제 시작...');
 
@@ -319,30 +230,9 @@ function updateStockRealtimePrice(stockCode, tradeData) {
     }
 }
 
-// ========== 모든 구독 해제 (백엔드 + 프론트엔드) ==========
+// ========== 이 연결의 모든 구독 해제 ==========
 function unsubscribeAllStocks() {
-    console.log('전체 구독 해제 시작...');
-
-    // 프론트엔드 STOMP 구독 해제
     unsubscribeFrontendOnly();
-
-    // 백엔드 구독 해제
-    if (!isMockMode && currentStockCodes.length > 0) {
-        fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0UNCNT0', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            keepalive: true
-        })
-            .then(res => res.json())
-            .then(response => {
-                console.log('백엔드 구독 해제 완료:', response);
-            })
-            .catch(error => {
-                console.error('백엔드 구독 해제 실패:', error);
-            });
-    }
 }
 
 // ========== 종목 아이템 HTML 생성 함수 ==========

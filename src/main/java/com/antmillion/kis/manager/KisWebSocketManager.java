@@ -131,6 +131,9 @@ public class KisWebSocketManager {
         	log.info("### [KIS 웹소켓] 연결 시도 중... ###");
             connect();
         }
+        if (session == null || !session.isOpen()) {
+            throw new IllegalStateException("KIS WebSocket is not connected");
+        }
         
         this.sendSubscribeMessage(this.session, stockCode, "1", trId);  // 실제 구독 메시지 전송
         targetSet.add(stockCode);
@@ -145,31 +148,14 @@ public class KisWebSocketManager {
             return;
         }
 
-        if (this.session != null && this.session.isOpen()) {
-            sendSubscribeMessage(this.session, stockCode, "2", trId);  // "2" = 구독 해제
+        try {
+            if (this.session != null && this.session.isOpen()) {
+                sendSubscribeMessage(this.session, stockCode, "2", trId);  // "2" = 구독 해제
+            }
+        } finally {
             targetSet.remove(stockCode);
-            log.info("### [SUCCESS] 구독 해제: {} | TR_ID: {} ###", stockCode, trId);
         }
-    }
-
-    // 전체 구독 해제
-    public synchronized void unsubscribeAll(String trId) {
-        Set<String> targetSet = isPresentPriceTrId(trId) ?  presentSubscribedStocks : askBidSubscribedStocks;
-        if (targetSet.isEmpty()) {
-        	log.info("### [INFO] {} 구독 중인 종목이 없습니다. ###", trId);
-            return;
-        }
-
-        log.info("### [PROCESS] {} 전체 구독 해제 시작 ###", trId);
-        // 복사본으로 반복 (ConcurrentModificationException 방지)
-        Set<String> stocksToUnsubscribe = ConcurrentHashMap.newKeySet();
-        stocksToUnsubscribe.addAll(targetSet);
-
-        for (String stockCode : stocksToUnsubscribe) {
-            unsubscribe(stockCode, trId);
-        }
-
-        log.info("### [SUCCESS] {} 전체 구독 해제 완료 ###", trId);
+        log.info("### [SUCCESS] 구독 해제: {} | TR_ID: {} ###", stockCode, trId);
     }
 
     // 구독/해제 메시지 전송 (통합)
@@ -197,7 +183,7 @@ public class KisWebSocketManager {
             log.info("### [REQUEST] {} {} 요청 전송: {} ###", 
                     dataType, (trType.equals("1") ? "구독" : "해제"), stockCode);
         } catch (IOException e) {
-            System.err.println("메시지 전송 실패: " + e.getMessage());
+            throw new IllegalStateException("KIS subscription send failed", e);
         }
     }
 }

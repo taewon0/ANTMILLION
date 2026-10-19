@@ -185,7 +185,7 @@ function renderMainStocks() {
                 // 렌더링 완료 후 구독
                 if (!isMockMode) {
                     const stockCodes = data.slice(0, 5).map(s => s.mksc_shrn_iscd);
-                    subscribeAllStocksToBackend(stockCodes);
+                    subscribeMainStocks(stockCodes);
                 }
                 
                 // 신호등 업데이트는 시차를 두고 실행
@@ -756,20 +756,8 @@ function updateMainStockRealtimePrice(stockCode, tradeData) {
 
 // ====== 아래는 원본 파일의 웹소켓(백엔드 구독), mock, 마감 스케줄 관련 로직 ======
 
-function subscribeAllStocksToBackend(stockCodes) {
-    fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0UNCNT0', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(stockCodes)
-    })
-        .then(res => res.json())
-        .then(response => {
-            // 프론트에서는 개별 종목 토픽 구독
-            stockCodes.forEach(code => {
-                subscribeStockToRealtime(code);
-            });
-        })
-        .catch(err => console.error('백엔드 구독 실패:', err));
+function subscribeMainStocks(stockCodes) {
+    stockCodes.forEach(code => subscribeStockToRealtime(code));
 }
 
 
@@ -961,7 +949,7 @@ async function updateAllTrafficSignals() {
     }
 }
 
-// ========== 모든 구독 해제 (백엔드 + 프론트엔드) ==========
+// ========== 이 연결의 모든 구독 해제 ==========
 function unsubscribeAllStocks() {
     console.log('[main.js] 전체 구독 해제 시작...');
 
@@ -973,22 +961,6 @@ function unsubscribeAllStocks() {
         }
     });
     subscribedTopics = {};
-
-    // 백엔드 구독 해제 - keepalive 옵션으로 페이지 이동 시에도 요청 완료 보장
-    fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0UNCNT0', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        keepalive: true  // 페이지 종료되어도 요청 완료
-    })
-        .then(res => res.json())
-        .then(response => {
-            console.log('[main.js] 백엔드 구독 해제 완료:', response);
-        })
-        .catch(error => {
-            console.error('[main.js] 백엔드 구독 해제 실패:', error);
-        });
 }
 
 // ========== 페이지 떠날 때 전체 구독 해제 ==========

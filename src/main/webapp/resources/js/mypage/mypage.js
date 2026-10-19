@@ -31,33 +31,19 @@ function connectStompForStockHoldings() {
 }
 
 // ===========================
-// 보유 종목 백엔드 구독 및 STOMP 토픽 구독
+// 보유 종목 STOMP 구독
 // ===========================
 function subscribeHoldingStocks() {
+    if (!stompClient || !stompClient.connected) return;
     const stockCodes = currentHoldingStocks.filter(stock => stock.active !== false).map(stock => stock.code);
-
-    if (stockCodes.length === 0) return;
-
-    // 1. 백엔드에 한국투자증권 구독 요청
-    fetch(contextPath + '/api/kis/websocket/subscribe-multiple?trId=H0STCNT0', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(stockCodes)
-    })
-        .then(res => res.json())
-        .then(response => {
-            console.log('마이페이지 백엔드 구독 완료:', response);
-
-            // 2. 프론트엔드 STOMP 토픽 구독
-            stockCodes.forEach(stockCode => {
-                subscribeStockTopicForHolding(stockCode);
-            });
-        })
-        .catch(error => {
-            console.error('마이페이지 백엔드 구독 실패:', error);
-        });
+    // 보유 목록 갱신 시 사라진 종목도 이 연결에서만 해제합니다.
+    Object.keys(subscribedStockTopics).forEach(stockCode => {
+        if (!stockCodes.includes(stockCode)) {
+            subscribedStockTopics[stockCode].unsubscribe();
+            delete subscribedStockTopics[stockCode];
+        }
+    });
+    stockCodes.forEach(stockCode => subscribeStockTopicForHolding(stockCode));
 }
 
 // ===========================
@@ -153,24 +139,6 @@ function unsubscribeAllHoldingStocks() {
         }
     }
     subscribedStockTopics = {};
-
-    // 백엔드 구독 해제
-    if (currentHoldingStocks.length > 0) {
-        fetch(contextPath + '/api/kis/websocket/unsubscribe-all?trId=H0STCNT0', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            keepalive: true
-        })
-            .then(res => res.json())
-            .then(response => {
-                console.log('마이페이지 백엔드 구독 해제 완료:', response);
-            })
-            .catch(error => {
-                console.error('마이페이지 백엔드 구독 해제 실패:', error);
-            });
-    }
 }
 
 // ===========================

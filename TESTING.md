@@ -42,3 +42,16 @@ node --test scripts/tests/mypage-executions.test.cjs
 DB 락·날짜별 성공 중복·실패 재시도·기록과 종목 변경의 롤백은 실제 일회성 DB에서 확인합니다.
 초기화 단계에서 `002-stock-sync-run.sql`도 적용하며 실행 기록 fixture까지 정리합니다.
 자동 실행 활성화 방법과 실행 상태 확인은 `STOCK_SYNC.md`를 확인합니다.
+
+KIS 구독 소유권과 mock 개발 모드는 아래 명령으로 별도 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisSubscriptionRegistryTest,MockDevelopmentModeTest' test
+node --test scripts/tests/kis-subscriptions.test.cjs scripts/tests/mock-mode.test.cjs
+```
+
+Java는 실제 Spring STOMP 프레임 처리와 메모리 이벤트·KIS 전송 대역을 사용하고,
+JS는 네 화면의 실제 구독 함수를 STOMP/DOM 대역에서 실행합니다.
+DB·Redis·증권사·애플리케이션 전체 설정을 로드하지 않으며, mock 자체 예약 스레드는 종료 시 정리합니다.
+다중 탭의 참조 유지, 중복 해제·연결 종료, 소유권 위조 차단과 일반/mock 경로를 확인합니다.
+실제 Tomcat·브라우저·SockJS 전송·KIS ACK 및 재연결 복원 검증과는 구분합니다.
