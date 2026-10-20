@@ -20,7 +20,7 @@ public class KisWebSocketTransactionPriceRequest {
         @JsonProperty("tr_type")
         private String trType;         // 1: 구독, 2: 해제
         @JsonProperty("content_type")
-        private String contentType;    // utf-8
+        private String contentType;    // 문자 인코딩: utf-8
     }
 
     @Getter @NoArgsConstructor @AllArgsConstructor @Builder

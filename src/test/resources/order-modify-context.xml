@@ -4,7 +4,7 @@
        xsi:schemaLocation="http://www.springframework.org/schema/beans
            http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- Reuse only the guarded disposable DB; no runtime scan or external clients. -->
+    <!-- 안전 검사가 적용된 일회성 DB만 재사용하며 애플리케이션 스캔과 외부 클라이언트는 사용하지 않습니다. -->
     <import resource="test-context.xml"/>
 
     <bean id="accountMapper" class="org.mybatis.spring.mapper.MapperFactoryBean">

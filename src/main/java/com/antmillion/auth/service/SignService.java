@@ -68,7 +68,7 @@ public class SignService {
 			throw new IllegalStateException("이미 사용 중인 닉네임입니다.");
 		}
 
-		// member insert
+		// 회원 정보 저장
 		MemberDTO member = new MemberDTO();
 		member.setRankId(1);
 		member.setPoint(0);
@@ -84,7 +84,7 @@ public class SignService {
 			throw new IllegalStateException("회원가입에 실패했습니다. (userId 생성 실패)");
 		}
 
-		// account insert
+		// 계좌 정보 저장
 		AccountDTO account = new AccountDTO();
 		account.setUserId(userId);
 		account.setBalance(50_000_000L);
@@ -118,7 +118,7 @@ public class SignService {
 			throw new IllegalStateException("이미 가입된 카카오 계정입니다.");
 		}
 
-		// member insert
+		// 회원 정보 저장
 		MemberDTO member = new MemberDTO();
 		member.setRankId(1);
 		member.setPoint(0);
@@ -133,7 +133,7 @@ public class SignService {
 		if (userId == null)
 			throw new IllegalStateException("회원가입 실패(userId 생성 실패)");
 
-		// account insert
+		// 계좌 정보 저장
 		AccountDTO account = new AccountDTO();
 		account.setUserId(userId);
 		account.setBalance(50_000_000L);

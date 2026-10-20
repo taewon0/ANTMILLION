@@ -59,7 +59,7 @@ public class KisStockMasterSource {
                     if (!code.matches("[A-Za-z0-9]{6,9}") || name.isEmpty() || name.length() > 100) {
                         throw new IOException("종목 코드 또는 이름이 올바르지 않습니다.");
                     }
-                    // The master also contains longer bond/ETN/rights codes outside our six-character universe.
+                    // 마스터에는 6자리 대상 범위에 속하지 않는 긴 채권·ETN·신주인수권 코드도 포함되어 있습니다.
                     if (code.length() != 6) {
                         continue;
                     }

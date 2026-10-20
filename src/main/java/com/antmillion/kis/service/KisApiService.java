@@ -149,7 +149,7 @@ public class KisApiService {
     	body.setAppkey(kisWebSocketConfig.appKey);
     	body.setSecretkey(kisWebSocketConfig.secretKey);
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON); // application/json; utf-8
+        headers.setContentType(MediaType.APPLICATION_JSON); // JSON 콘텐츠 유형과 UTF-8 인코딩
         HttpEntity<KisWebSocketRequest> request =
                 new HttpEntity<>(body, headers);
         ResponseEntity<KisWebSocketResponse> response = restTemplate.postForEntity(url, request, KisWebSocketResponse.class);

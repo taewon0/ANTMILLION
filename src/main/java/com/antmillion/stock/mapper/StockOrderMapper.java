@@ -25,7 +25,7 @@ public interface StockOrderMapper {
      */
     List<StockOrderResponseDTO> selectWaitOrders(@Param("accountId") Long accountId);
 
-    // Server quote subscriptions need committed pending stocks across all accounts.
+    // 서버 호가 구독을 위해 전체 계좌에서 커밋된 미체결 주문 종목을 조회합니다.
     List<String> selectPendingQuoteStockCodes();
 
     /**

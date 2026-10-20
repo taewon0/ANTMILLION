@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.*;
 
-/** Actual STOMP frame decoding and Spring events; no properties, DB, Redis or broker connections. */
+/** 실제 STOMP 프레임 해석과 스프링 이벤트를 사용하며 설정 파일·DB·레디스·외부 브로커 연결은 사용하지 않습니다. */
 public class KisSubscriptionRegistryTest {
     static class Provider extends KisWebSocketManager {
         final List<String> acquired = new ArrayList<>();
@@ -380,7 +380,7 @@ public class KisSubscriptionRegistryTest {
     public void providerSendFailureAndClosedSessionDoNotLeaveFalseSubscriptionState() {
         KisWebSocketManager manager = new KisWebSocketManager(null, null, null) {
             @Override
-            public synchronized void connect() { /* Do not contact KIS. */ }
+            public synchronized void connect() { /* 실제 KIS에 연결하지 않습니다. */ }
         };
         assertThrows(IllegalStateException.class, () -> manager.subscribe("005930", "H0STCNT0"));
         AtomicBoolean open = new AtomicBoolean(true), fail = new AtomicBoolean(true);

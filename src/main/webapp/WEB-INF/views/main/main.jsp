@@ -226,7 +226,7 @@
         history.scrollRestoration = 'manual';
     }
 </script>
-<!-- Adding the standalone version of Lightweight charts -->
+<!-- Lightweight Charts 독립 실행 버전을 불러옵니다. -->
 <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 <script> const contextPath = '${cpath}'; </script>
 

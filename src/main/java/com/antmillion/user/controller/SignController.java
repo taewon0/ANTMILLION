@@ -226,7 +226,7 @@ public class SignController {
 					throw new IllegalStateException("카카오 가입 시간이 만료되었습니다. 다시 카카오 로그인을 진행하세요.");
 				}
 
-				// DB insert: member(email/password null) + account + social
+				// DB 저장: 이메일·비밀번호가 없는 회원 정보와 계좌·소셜 연결 정보를 저장합니다.
 				SignUpResult result = signService.signUpKakao(kakaoId, nickname);
 
 				// 가입과 동시에 로그인
@@ -302,7 +302,7 @@ public class SignController {
 		return "redirect:/";
 	}
 
-	// Normalizer
+	// 입력값 정규화
 	private static String n(String v) {
 		return (v == null) ? "" : v.trim();
 	}

@@ -67,7 +67,7 @@ public class StockPreservationTest {
         cache.refresh();
     }
 
-    // No test transaction masks application commits/rollbacks; cleanup uses only the guarded disposable DB.
+    // 테스트 트랜잭션으로 애플리케이션의 커밋·롤백을 가리지 않으며 정리는 안전 검사가 적용된 일회성 DB에서만 수행합니다.
     @After
     public void cleanup() {
         if (accountId != null) {
@@ -184,7 +184,7 @@ public class StockPreservationTest {
     public void inactiveStockCannotCreateModifyOrExecuteOrders() {
         deactivate();
         assertFalse(orderService.createOrder(accountId, "TEST01", "BUY", "LIMIT", 1, 1000));
-        // Simulate a stale WAIT row: active predicates must still reject modify/execution.
+        // 오래된 대기(WAIT) 주문을 재현하고 활성 종목 조건으로 정정·체결이 거부되는지 확인합니다.
         jdbc.update("UPDATE stock_order SET status='WAIT' WHERE order_id=?", partialOrderId);
         StockOrderDTO request = new StockOrderDTO();
         request.setOrderId(partialOrderId); request.setQuantity(10); request.setOrderPrice(1200);

@@ -31,7 +31,7 @@ import java.util.UUID;
 
 import static org.junit.Assert.*;
 
-/** Guarded disposable MySQL, actual Mapper/engine/STOMP events, synthetic KIS transport only. */
+/** 안전 검사가 적용된 일회성 MySQL과 실제 매퍼·체결 엔진·STOMP 이벤트를 사용하며 KIS 전송은 대역으로 처리합니다. */
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:stock-preservation-context.xml")
 public class OrderQuoteSubscriptionIntegrationTest {

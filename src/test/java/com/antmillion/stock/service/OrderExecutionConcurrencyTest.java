@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
 
-/** Independent connections and real SQL; application services are deliberately not Spring proxies. */
+/** 독립적인 DB 연결과 실제 SQL을 사용하며 애플리케이션 서비스는 스프링 프록시를 거치지 않도록 직접 생성합니다. */
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:test-context.xml")
 public class OrderExecutionConcurrencyTest {
@@ -82,7 +82,7 @@ public class OrderExecutionConcurrencyTest {
 
     @Test
     public void concurrentPartialSellUsesLatestQuantityAndCost() throws Exception {
-        // Extra holdings allow an incorrect overfill to commit instead of failing the quantity guard.
+        // 잘못된 초과 체결이 수량 검증에 먼저 막히지 않고 커밋될 수 있도록 보유 수량을 넉넉히 설정합니다.
         jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) VALUES(?,'RACE01',7,5003,714.7142857)", accountId);
         concurrentExecution("SELL", 5, 3);
         assertEquals(2, countTrades());

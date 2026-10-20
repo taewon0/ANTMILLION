@@ -1,6 +1,6 @@
--- DDL copied from db_schema/schema.sql; no dump data or destructive statements.
+-- db_schema/schema.sql에서 복사한 테이블 정의이며 덤프 데이터와 파괴적 명령문은 포함하지 않습니다.
 
--- Changes to trading tables must also be reflected here.
+-- 거래 테이블의 변경 사항은 이 파일에도 반영해야 합니다.
 
 CREATE TABLE `ant_rank` (
   `rank_id` int NOT NULL AUTO_INCREMENT,
@@ -102,7 +102,7 @@ CREATE TABLE `realized_pnl` (
   PRIMARY KEY (`real_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Apply the production migration to the pre-migration stock DDL in this disposable DB.
+-- 이 일회성 DB의 마이그레이션 전 종목 테이블 정의에 실제 배포용 마이그레이션을 적용합니다.
 SOURCE /opt/antmillion-migrations/001-stock-active.sql;
 SOURCE /opt/antmillion-migrations/002-stock-sync-run.sql;
 

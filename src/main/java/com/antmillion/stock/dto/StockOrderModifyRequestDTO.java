@@ -6,7 +6,7 @@ import lombok.Data;
 
 @Data
 public class StockOrderModifyRequestDTO {
-    // Preserve JSON numbers until exact conversion; Integer/Long binding can truncate fractions.
+    // Integer/Long 바인딩의 소수 절삭을 막기 위해 정확한 정수 변환 전까지 JSON 숫자를 보존합니다.
     private BigDecimal orderId;
     private BigDecimal quantity;
     private BigDecimal orderPrice;

@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup;
 
-/** Only mock beans and MVC are loaded: no properties, DB, Redis, KIS or application schedulers. */
+/** 모의 빈과 MVC만 로드하며 설정 파일·DB·레디스·KIS·애플리케이션 스케줄러는 로드하지 않습니다. */
 public class MockDevelopmentModeTest {
     @Configuration
     @ComponentScan(basePackageClasses = MockDataService.class, useDefaultFilters = false,

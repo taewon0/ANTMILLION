@@ -187,7 +187,7 @@ function setupEventListeners() {
     // 메인 탭 전환 버튼 이벤트
     tabButtons.forEach(button => {
         button.addEventListener('click', function() {
-            const target = this.dataset.tab; // 'stock', 'realized', 'executed', 'account'
+            const target = this.dataset.tab; // 탭 종류: 보유(stock), 실현손익(realized), 체결(executed), 계좌(account)
             console.log("탭 전환:", target);
             
             // 1. 모든 버튼 및 패널 비활성화

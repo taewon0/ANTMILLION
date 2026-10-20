@@ -86,7 +86,7 @@ public class InterestController {
         return ResponseEntity.ok(Map.of("isInterest", isInterest));
     }
 
-    // InterestController
+    // 관심종목 컨트롤러
     @GetMapping("/details/paged")
     public ResponseEntity<Map<String, Object>> getInterestDetailsPaged(
             @RequestParam(defaultValue = "1") int page,

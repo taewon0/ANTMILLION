@@ -1,8 +1,8 @@
--- MySQL dump 10.13  Distrib 8.0.44, for Win64 (x86_64)
+-- MySQL 덤프 10.13  배포판 8.0.44, 대상 Win64 (x86_64)
 --
--- Host: localhost    Database: antmillion
+-- 호스트: localhost    데이터베이스: antmillion
 -- ------------------------------------------------------
--- Server version	8.0.44
+-- 서버 버전	8.0.44
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -16,7 +16,7 @@
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
 --
--- Table structure for table `account`
+-- `account` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `account`;
@@ -36,7 +36,7 @@ CREATE TABLE `account` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `ant_rank`
+-- `ant_rank` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `ant_rank`;
@@ -52,7 +52,7 @@ CREATE TABLE `ant_rank` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `ant_rank`
+-- `ant_rank` 테이블 데이터 덤프
 --
 
 LOCK TABLES `ant_rank` WRITE;
@@ -62,7 +62,7 @@ INSERT INTO `ant_rank` VALUES (1,'브론즈',0,'resources/images/profile/bronze-
 UNLOCK TABLES;
 
 --
--- Table structure for table `asset`
+-- `asset` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `asset`;
@@ -85,7 +85,7 @@ CREATE TABLE `asset` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `community`
+-- `community` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `community`;
@@ -106,7 +106,7 @@ CREATE TABLE `community` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `history`
+-- `history` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `history`;
@@ -130,7 +130,7 @@ CREATE TABLE `history` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `interest`
+-- `interest` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `interest`;
@@ -148,7 +148,7 @@ CREATE TABLE `interest` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `member`
+-- `member` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `member`;
@@ -171,7 +171,7 @@ CREATE TABLE `member` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `mission`
+-- `mission` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `mission`;
@@ -185,7 +185,7 @@ CREATE TABLE `mission` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `mission`
+-- `mission` 테이블 데이터 덤프
 --
 
 LOCK TABLES `mission` WRITE;
@@ -195,7 +195,7 @@ INSERT INTO `mission` VALUES (1,'오늘의 경제 퀴즈'),(2,'오늘의 증권 
 UNLOCK TABLES;
 
 --
--- Table structure for table `news_log`
+-- `news_log` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `news_log`;
@@ -213,7 +213,7 @@ CREATE TABLE `news_log` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `quiz_choice`
+-- `quiz_choice` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `quiz_choice`;
@@ -231,7 +231,7 @@ CREATE TABLE `quiz_choice` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `quiz_choice`
+-- `quiz_choice` 테이블 데이터 덤프
 --
 
 LOCK TABLES `quiz_choice` WRITE;
@@ -241,7 +241,7 @@ INSERT INTO `quiz_choice` VALUES (1,11,1,'금'),(2,11,2,'달러'),(3,11,3,'국�
 UNLOCK TABLES;
 
 --
--- Table structure for table `quiz_log`
+-- `quiz_log` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `quiz_log`;
@@ -261,7 +261,7 @@ CREATE TABLE `quiz_log` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `quiz_question`
+-- `quiz_question` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `quiz_question`;
@@ -283,7 +283,7 @@ CREATE TABLE `quiz_question` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `quiz_question`
+-- `quiz_question` 테이블 데이터 덤프
 --
 
 LOCK TABLES `quiz_question` WRITE;
@@ -293,7 +293,7 @@ INSERT INTO `quiz_question` VALUES (1,1,1,'인플레이션(Inflation)이 발생�
 UNLOCK TABLES;
 
 --
--- Table structure for table `realized_pnl`
+-- `realized_pnl` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `realized_pnl`;
@@ -315,7 +315,7 @@ CREATE TABLE `realized_pnl` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `social`
+-- `social` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `social`;
@@ -331,7 +331,7 @@ CREATE TABLE `social` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `stock`
+-- `stock` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `stock`;
@@ -347,7 +347,7 @@ CREATE TABLE `stock` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `stock`
+-- `stock` 테이블 데이터 덤프
 --
 
 LOCK TABLES `stock` WRITE;
@@ -357,7 +357,7 @@ INSERT INTO `stock` (`stock_code`, `stock_name`, `stock_image`) VALUES ('000020'
 UNLOCK TABLES;
 
 --
--- Table structure for table `stock_order`
+-- `stock_order` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `stock_order`;
@@ -383,7 +383,7 @@ CREATE TABLE `stock_order` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `temp_stock`
+-- `temp_stock` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `temp_stock`;
@@ -397,7 +397,7 @@ CREATE TABLE `temp_stock` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `temp_stock`
+-- `temp_stock` 테이블 데이터 덤프
 --
 
 LOCK TABLES `temp_stock` WRITE;
@@ -407,7 +407,7 @@ INSERT INTO `temp_stock` VALUES ('000020','동화약품'),('000040','KR모터스
 UNLOCK TABLES;
 
 --
--- Table structure for table `trade_log`
+-- `trade_log` 테이블 구조
 --
 
 DROP TABLE IF EXISTS `trade_log`;
@@ -434,9 +434,9 @@ CREATE TABLE `trade_log` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-03-03  9:56:59
+-- 덤프 완료 일시: 2026-03-03  9:56:59
 
--- Apply once before enabling daily stock sync. No existing trade data is modified.
+-- 일일 종목 동기화를 활성화하기 전에 한 번 적용합니다. 기존 거래 데이터는 변경하지 않습니다.
 CREATE TABLE stock_sync_run (
     run_date DATE NOT NULL,
     run_id CHAR(36) NOT NULL,

@@ -29,7 +29,7 @@ import java.util.function.Supplier;
 
 import static org.junit.Assert.*;
 
-/** No properties, database or external transport; private timers are closed by each lifecycle test. */
+/** 설정 파일·DB·외부 전송은 사용하지 않으며 각 수명 주기 테스트에서 전용 타이머를 종료합니다. */
 public class OrderQuoteSubscriptionSchedulerTest {
     @Test
     public void realContextStartsRestorationImmediatelyAndClosesPrivateWorker() throws Exception {
