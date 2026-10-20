@@ -25,4 +25,8 @@
         WHERE order_id = #{orderId}
     </select>
 
+    <select id="getExecutedQuantitiesForUpdate" resultType="int" useCache="false" flushCache="true">
+        SELECT trade_quantity FROM trade_log WHERE order_id = #{orderId} ORDER BY trade_id FOR UPDATE
+    </select>
+
 </mapper>

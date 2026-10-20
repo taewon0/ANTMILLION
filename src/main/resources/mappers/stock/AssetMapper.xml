@@ -65,7 +65,7 @@
           AND quantity &lt;= 0
     </delete>
 
-    <select id="getAssetForSell" resultType="com.antmillion.stock.dto.AssetDTO">
+    <select id="getAssetForSell" resultType="com.antmillion.stock.dto.AssetDTO" useCache="false" flushCache="true">
         SELECT
             account_id AS accountId,
             stock_code AS stockCode,
@@ -75,6 +75,7 @@
         FROM asset
         WHERE account_id = #{accountId}
           AND stock_code = #{stockCode}
+        FOR UPDATE
     </select>
 
     <update id="updateAssetSellWithCostBasis">
