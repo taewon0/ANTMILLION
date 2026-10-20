@@ -1,189 +1,374 @@
 package com.antmillion.kis.manager;
 
-import static com.antmillion.kis.constant.KisWebSocketTrId.isPresentPriceTrId;
-
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
-import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
-import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-
 import com.antmillion.kis.dto.KisWebSocketTransactionPriceRequest;
 import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.service.KisApiService;
 import com.antmillion.stock.service.TradingEngineService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import lombok.Getter;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.EnvironmentAware;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Service;
+import org.springframework.util.concurrent.ListenableFuture;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
-/**
- * KIS 웹소켓 세션 관리자 (KisWebSocketManager)
- * 1. 연결: connect() 호출 시 KisWebSocketHandler를 등록하고 KIS 서버와 세션 수립
- * 2. 구독 관리: 외부에서 subscribe() 호출 시, 내부 Set에 종목 저장 및 KIS 서버에 구독 JSON 전송
- * 3. 생존 확인: lastHeartbeatTime을 관리하며, Handler에서 호출하는 monitorHealth()를 통해 재연결 수행
- * 4. 세션 공유: 수립된 세션을 통해 Handler와 독립적으로 서버에 메시지(구독/해제)를 보냄
- */
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
+/** 참조의 희망 상태와 연결별 전송 상태를 분리하고 전용 단일 스레드에서 복원합니다. */
 @Slf4j
 @Service
-public class KisWebSocketManager {
+public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private final KisApiService kisApiService;
-    private final SimpMessagingTemplate messagingTemplate; // STOMP 전송용 주입
-    @Getter @Setter
-    private WebSocketSession session;
-    private long lastHeartbeatTime;
-    private final ObjectMapper objectMapper = new ObjectMapper();
-    private final String WS_URL = "ws://ops.koreainvestment.com:21000"; // 실전투자 기준
-    private boolean isConnected = false; // 연결 상태 저장
-    private String approvalKey;
+    private final SimpMessagingTemplate messagingTemplate;
     private final TradingEngineService tradingEngineService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Object state = new Object();
+    private final Map<String, Subscription> desired = new LinkedHashMap<>();
+    private final Map<String, Subscription> sent = new LinkedHashMap<>();
+    private Environment environment;
+    private ThreadPoolTaskScheduler scheduler;
+    private ThreadPoolTaskExecutor handshakeExecutor;
+    private ScheduledFuture<?> task;
+    private ListenableFuture<WebSocketSession> connecting;
+    private WebSocketSession session;
+    private WebSocketSession candidate;
+    private String approvalKey;
+    private boolean running;
+    private long generation;
+    private long attemptSequence;
+    private long activeAttempt;
+    private long retryAt;
+    private long retryDelay = 1000;
 
-    private final Set<String> presentSubscribedStocks = ConcurrentHashMap.newKeySet();
-
-    private final Set<String> askBidSubscribedStocks = ConcurrentHashMap.newKeySet();
-
-    public KisWebSocketManager(KisApiService kisApiService, SimpMessagingTemplate messagingTemplate, TradingEngineService tradingEngineService) {
+    public KisWebSocketManager(KisApiService kisApiService, SimpMessagingTemplate messagingTemplate,
+            TradingEngineService tradingEngineService) {
         this.kisApiService = kisApiService;
         this.messagingTemplate = messagingTemplate;
-		this.tradingEngineService = tradingEngineService;
+        this.tradingEngineService = tradingEngineService;
     }
 
-	// 웹소켓 연결
-    public synchronized void connect() {
-    	
-        if (session != null && session.isOpen()) return;
+    @Override
+    public void setEnvironment(Environment environment) { this.environment = environment; }
 
-        try {
-        	approvalKey = kisApiService.getKisApprovalKey();
-            KisWebSocketHandler handler = new KisWebSocketHandler(this, approvalKey, messagingTemplate, objectMapper, tradingEngineService);
-            StandardWebSocketClient client = new StandardWebSocketClient();
-
-            client.setUserProperties(new HashMap<String, Object>() {{
-                put("org.apache.tomcat.websocket.textBufferSize", 65536);
-                put("org.apache.tomcat.websocket.binaryBufferSize", 65536);
-            }});
-
-            session = client.doHandshake(handler, WS_URL).get();   
-            lastHeartbeatTime = System.currentTimeMillis();
-            isConnected = true;
-            log.info("### KIS 서버와 웹소켓 연결 완료 ###");
-        } catch (Exception e) {
-        	isConnected = false;
-        	log.error("### [ERROR] 웹소켓 연결 실패: {} ###", e.getMessage());
-        }
-    }
-    
-	 // 브라우저 종료로 인한 세션 종료
-    public void disconnect() {
-        if (session != null && session.isOpen()) {
+    @Override
+    public void start() {
+        synchronized (state) {
+            if (running || (environment != null && environment.acceptsProfiles(Profiles.of("dev-mock")))) return;
+            scheduler = createScheduler();
+            scheduler.setPoolSize(1);
+            scheduler.setThreadNamePrefix("kis-recovery-");
+            scheduler.setRemoveOnCancelPolicy(true);
             try {
-                session.close();
-                log.info("### 브라우저 종료로 인한 KIS 세션 종료 ###");
-            } catch (IOException e) {
-                e.printStackTrace();
+                // 타임아웃을 무시하는 연결 대역/구현도 연결 스레드를 계속 늘릴 수 없습니다.
+                handshakeExecutor = new ThreadPoolTaskExecutor();
+                handshakeExecutor.setCorePoolSize(1);
+                handshakeExecutor.setMaxPoolSize(1);
+                handshakeExecutor.setQueueCapacity(0);
+                handshakeExecutor.setThreadNamePrefix("kis-handshake-");
+                handshakeExecutor.initialize();
+                scheduler.initialize();
+                running = true;
+                long startedGeneration = ++generation;
+                task = scheduler.scheduleWithFixedDelay(() -> reconcile(startedGeneration), 250);
+                if (task == null) throw new IllegalStateException("KIS recovery task was not scheduled");
+            } catch (RuntimeException e) {
+                running = false;
+                scheduler.shutdown();
+                scheduler = null;
+                handshakeExecutor.shutdown();
+                handshakeExecutor = null;
+                throw e;
             }
         }
-        this.session = null;
-        isConnected = false;
     }
-    
-    // 웹소켓 재연결
-    public void monitorHealth() {
-        if (session == null || !session.isOpen()) {
-        	log.info("### [RECONNECT] 세션 끊김 - 재연결 시도 ###");
-            session = null;
-            connect();
+
+    /** 호출자는 연결을 기다리지 않고 같은 TR·종목의 희망 상태만 등록합니다. */
+    public void subscribe(String stockCode, String trId) {
+        synchronized (state) {
+            desired.putIfAbsent(key(stockCode, trId), new Subscription(stockCode, trId));
         }
     }
 
-    // 구독 상태 초기화 메서드 추가
-    public void clearSubscriptionState() {
-        int presentCount = presentSubscribedStocks.size();
-        int askBidCount = askBidSubscribedStocks.size();
-
-        presentSubscribedStocks.clear();
-        askBidSubscribedStocks.clear();
-
-        log.info("### [CLEAR] 구독 상태 초기화 완료 (체결가: {}개, 호가: {}개) ###", presentCount, askBidCount);
-    }
-    
-    public void updateLastHeartbeatTime() {
-        this.lastHeartbeatTime = System.currentTimeMillis();
-    }
-    
-    // 세션 관리용
-    public synchronized void subscribe(String stockCode, String trId) {
-        Set<String> targetSet = isPresentPriceTrId(trId) ?  presentSubscribedStocks : askBidSubscribedStocks;
-        // 중복 구독 방지
-        if (targetSet.contains(stockCode)) {
-        	log.info("### [SKIP] 이미 {} 구독 중인 종목: {} ###", trId, stockCode);
-            return;
-        }
-
-        if (session == null || !session.isOpen()) {
-        	log.info("### [KIS 웹소켓] 연결 시도 중... ###");
-            connect();
-        }
-        if (session == null || !session.isOpen()) {
-            throw new IllegalStateException("KIS WebSocket is not connected");
-        }
-        
-        this.sendSubscribeMessage(this.session, stockCode, "1", trId);  // 실제 구독 메시지 전송
-        targetSet.add(stockCode);
-        log.info("### [SUCCESS] 구독 완료: {} | TR_ID: {} ###", stockCode, trId);
+    public void unsubscribe(String stockCode, String trId) {
+        synchronized (state) { desired.remove(key(stockCode, trId)); }
     }
 
-    // 구독 해제 메소드
-    public synchronized void unsubscribe(String stockCode, String trId) {
-        Set<String> targetSet = isPresentPriceTrId(trId) ?  presentSubscribedStocks : askBidSubscribedStocks;
-        if (!targetSet.contains(stockCode)) {
-        	log.info("### [INFO] {} 구독 중이 아닌 종목: {} ###", trId, stockCode);
-            return;
-        }
+    private static String key(String stockCode, String trId) { return trId + ":" + stockCode; }
 
+    private void reconcile(long startedGeneration) {
+        WebSocketSession current;
+        synchronized (state) {
+            if (!running || generation != startedGeneration) return;
+            current = session;
+        }
         try {
-            if (this.session != null && this.session.isOpen()) {
-                sendSubscribeMessage(this.session, stockCode, "2", trId);  // "2" = 구독 해제
+            if (current != null && !current.isOpen()) {
+                connectionLost(current);
+                current = null;
+            }
+            synchronized (state) {
+                if (!running || generation != startedGeneration) return;
+                if (desired.isEmpty()) {
+                    current = session;
+                    session = null;
+                    sent.clear();
+                    retryAt = 0;
+                    retryDelay = 1000;
+                } else {
+                    current = null;
+                }
+            }
+            if (current != null) close(current);
+            synchronized (state) {
+                if (!running || generation != startedGeneration || desired.isEmpty()
+                        || (retryAt != 0 && nowMillis() < retryAt)) return;
+                current = session;
+            }
+            if (current == null) current = connect(startedGeneration);
+            if (current == null) return;
+            // 연결 대기 중 바뀐 참조를 다시 읽어 이전 스냅샷을 재전송하지 않습니다.
+            Map<String, Subscription> additions;
+            Map<String, Subscription> removals;
+            String currentApprovalKey;
+            synchronized (state) {
+                if (!running || generation != startedGeneration || session != current) return;
+                additions = new LinkedHashMap<>(desired);
+                additions.keySet().removeAll(sent.keySet());
+                removals = new LinkedHashMap<>(sent);
+                removals.keySet().removeAll(desired.keySet());
+                currentApprovalKey = approvalKey;
+            }
+            apply(current, startedGeneration, currentApprovalKey, removals, false);
+            apply(current, startedGeneration, currentApprovalKey, additions, true);
+            synchronized (state) {
+                if (!running || generation != startedGeneration || session != current) return;
+                retryDelay = 1000;
+                retryAt = 0;
+            }
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            failed(startedGeneration);
+            log.warn("KIS recovery failed: {}", e.getClass().getSimpleName());
+        }
+    }
+
+    private void apply(WebSocketSession current, long startedGeneration, String key,
+            Map<String, Subscription> changes, boolean subscribing) throws IOException {
+        for (Map.Entry<String, Subscription> entry : changes.entrySet()) {
+            synchronized (state) {
+                if (!running || generation != startedGeneration || session != current) return;
+                if (subscribing ? desired.get(entry.getKey()) != entry.getValue()
+                        : desired.containsKey(entry.getKey())) continue;
+            }
+            // 네트워크 전송 중에도 구독/해제 참조를 갱신할 수 있습니다.
+            sendSubscription(current, entry.getValue(), subscribing ? "1" : "2", key);
+            synchronized (state) {
+                if (!running || generation != startedGeneration || session != current) return;
+                // 이미 전송 중이던 프레임은 기록해 다음 조회에서 해제/재획득으로 보정합니다.
+                if (subscribing) sent.put(entry.getKey(), entry.getValue());
+                else sent.remove(entry.getKey());
+            }
+        }
+    }
+
+    private WebSocketSession connect(long startedGeneration) throws Exception {
+        long attempt;
+        synchronized (state) {
+            if (!running || generation != startedGeneration || desired.isEmpty()) return null;
+            activeAttempt = attempt = ++attemptSequence;
+        }
+        ListenableFuture<WebSocketSession> future = null;
+        WebSocketSession opened = null;
+        try {
+            String key = requestApprovalKey();
+            synchronized (state) {
+                if (!running || generation != startedGeneration || activeAttempt != attempt || desired.isEmpty()) return null;
+            }
+            future = handshake(new KisWebSocketHandler(this, key, messagingTemplate, objectMapper,
+                    tradingEngineService, attempt));
+            synchronized (state) {
+                if (!running || generation != startedGeneration || activeAttempt != attempt) return null;
+                connecting = future;
+            }
+            opened = future.get(handshakeTimeoutMillis(), TimeUnit.MILLISECONDS);
+            synchronized (state) {
+                if (!running || generation != startedGeneration || activeAttempt != attempt
+                        || desired.isEmpty() || !opened.isOpen()) return null;
+                session = opened;
+                approvalKey = key;
+                sent.clear();
+                candidate = null;
+                activeAttempt = 0;
+                return opened;
             }
         } finally {
-            targetSet.remove(stockCode);
+            WebSocketSession abandoned = null;
+            synchronized (state) {
+                if (activeAttempt == attempt) {
+                    activeAttempt = 0;
+                    abandoned = candidate;
+                    candidate = null;
+                }
+                if (connecting == future) connecting = null;
+                if (opened != null && session != opened) abandoned = opened;
+            }
+            if (future != null && !future.isDone()) future.cancel(true);
+            close(abandoned);
         }
-        log.info("### [SUCCESS] 구독 해제: {} | TR_ID: {} ###", stockCode, trId);
     }
 
-    // 구독/해제 메시지 전송 (통합)
-    private void sendSubscribeMessage(WebSocketSession session, String stockCode, String trType, String trId) {
+    /** 시간 초과·종료 후 늦게 성립한 연결도 닫습니다. */
+    public void connectionEstablished(WebSocketSession opened, long attempt) {
+        synchronized (state) {
+            if (running && activeAttempt == attempt && !desired.isEmpty()) {
+                candidate = opened;
+                return;
+            }
+        }
+        close(opened);
+    }
+
+    public void connectionLost(WebSocketSession lost) {
+        synchronized (state) {
+            if (candidate == lost) {
+                candidate = null;
+                activeAttempt = 0;
+                if (connecting != null) connecting.cancel(true);
+            } else if (session == lost) {
+                session = null;
+            } else {
+                return;
+            }
+            sent.clear();
+            delayRetry();
+        }
+        close(lost);
+    }
+
+    public boolean isCurrentSession(WebSocketSession source) {
+        synchronized (state) { return running && session == source; }
+    }
+
+    private void failed(long startedGeneration) {
+        WebSocketSession failed;
+        synchronized (state) {
+            if (!running || generation != startedGeneration) return;
+            failed = session;
+            session = null;
+            sent.clear();
+            if (!desired.isEmpty() && (retryAt == 0 || nowMillis() >= retryAt)) delayRetry();
+        }
+        close(failed);
+    }
+
+    private void delayRetry() {
+        retryAt = nowMillis() + retryDelay;
+        retryDelay = Math.min(retryDelay * 2, 30000);
+    }
+
+    public void echoHeartbeat(WebSocketSession source, String payload) {
+        synchronized (state) {
+            if (session != source && candidate != source) return;
+        }
+        try {
+            send(source, new TextMessage(payload));
+        } catch (IOException e) {
+            connectionLost(source);
+        }
+    }
+
+    private void sendSubscription(WebSocketSession target, Subscription subscription, String type, String key) throws IOException {
         KisWebSocketTransactionPriceRequest request = KisWebSocketTransactionPriceRequest.builder()
-                .header(KisWebSocketTransactionPriceRequest.Header.builder()
-                        .approvalKey(approvalKey)
-                        .custtype("P")
-                        .trType(trType)  // "1" = 구독, "2" = 해제
-                        .contentType("utf-8")
-                        .build())
+                .header(KisWebSocketTransactionPriceRequest.Header.builder().approvalKey(key)
+                        .custtype("P").trType(type).contentType("utf-8").build())
                 .body(KisWebSocketTransactionPriceRequest.Body.builder()
                         .input(KisWebSocketTransactionPriceRequest.Body.Input.builder()
-                                .trId(trId)
-                                .trKey(stockCode)
-                                .build())
-                        .build())
-                .build();
+                                .trId(subscription.trId).trKey(subscription.stockCode).build()).build()).build();
+        send(target, new TextMessage(objectMapper.writeValueAsString(request)));
+    }
 
-        try {
-            String json = objectMapper.writeValueAsString(request);
-            session.sendMessage(new TextMessage(json));
+    // JSR-356의 동시 전송 제한에 따라 PINGPONG과 구독 전송도 같은 세션에서 직렬화합니다.
+    private void send(WebSocketSession target, TextMessage message) throws IOException {
+        synchronized (target) { target.sendMessage(message); }
+    }
 
-            String dataType = isPresentPriceTrId(trId) ? "체결가" : "호가";
-            log.info("### [REQUEST] {} {} 요청 전송: {} ###", 
-                    dataType, (trType.equals("1") ? "구독" : "해제"), stockCode);
-        } catch (IOException e) {
-            throw new IllegalStateException("KIS subscription send failed", e);
+    private void close(WebSocketSession closing) {
+        if (closing == null) return;
+        try { closing.close(); }
+        catch (IOException e) { log.warn("KIS session close failed: {}", e.getClass().getSimpleName()); }
+    }
+
+    @Override
+    public void stop() {
+        ThreadPoolTaskScheduler stopping;
+        ThreadPoolTaskExecutor stoppingHandshake;
+        WebSocketSession closed;
+        WebSocketSession pending;
+        synchronized (state) {
+            running = false;
+            ++generation;
+            activeAttempt = 0;
+            if (task != null) task.cancel(true);
+            task = null;
+            if (connecting != null) connecting.cancel(true);
+            connecting = null;
+            stopping = scheduler;
+            scheduler = null;
+            stoppingHandshake = handshakeExecutor;
+            handshakeExecutor = null;
+            closed = session;
+            session = null;
+            pending = candidate;
+            candidate = null;
+            sent.clear();
+            retryAt = 0;
+            retryDelay = 1000;
         }
+        if (stopping != null) stopping.shutdown();
+        if (stoppingHandshake != null) stoppingHandshake.shutdown();
+        close(closed);
+        close(pending);
+    }
+
+    @Override
+    public boolean isRunning() { synchronized (state) { return running; } }
+
+    @Override
+    public int getPhase() { return 0; }
+
+    protected ThreadPoolTaskScheduler createScheduler() { return new ThreadPoolTaskScheduler(); }
+    protected long nowMillis() { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime()); }
+    protected long handshakeTimeoutMillis() { return 5000; }
+    protected String requestApprovalKey() { return kisApiService.getKisApprovalKey(); }
+
+    protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler) {
+        StandardWebSocketClient client = new StandardWebSocketClient();
+        synchronized (state) {
+            if (!running) throw new IllegalStateException("KIS recovery is stopped");
+            client.setTaskExecutor(handshakeExecutor);
+        }
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("org.apache.tomcat.websocket.textBufferSize", 65536);
+        properties.put("org.apache.tomcat.websocket.binaryBufferSize", 65536);
+        client.setUserProperties(properties);
+        return client.doHandshake(handler, "ws://ops.koreainvestment.com:21000");
+    }
+
+    private static class Subscription {
+        private final String stockCode;
+        private final String trId;
+        private Subscription(String stockCode, String trId) { this.stockCode = stockCode; this.trId = trId; }
     }
 }

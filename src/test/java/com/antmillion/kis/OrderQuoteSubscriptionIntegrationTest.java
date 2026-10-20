@@ -23,6 +23,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.CloseStatus;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -213,6 +214,64 @@ public class OrderQuoteSubscriptionIntegrationTest {
     private OrderQuoteSubscriptionScheduler newScheduler(StockOrderMapper mapper) {
         return OrderQuoteSubscriptionSchedulerTest.scheduler(mapper,
                 wire.context.getBean(KisSubscriptionRegistry.class), transactionManager, worker);
+    }
+
+    @Test
+    public void restoredServerQuotesFillWithoutBrowserAndDoNotReviveCancelledOrders() throws Exception {
+        Long order = create(buyer, "BUY", 3, 1100);
+        ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
+        channel.subscribe(message -> { });
+        try (KisWebSocketRecoveryTest.Manager manager = new KisWebSocketRecoveryTest.Manager(
+                new SimpMessagingTemplate(channel), engine)) {
+            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            OrderQuoteSubscriptionSchedulerTest.Worker timer = new OrderQuoteSubscriptionSchedulerTest.Worker();
+            OrderQuoteSubscriptionScheduler recovering = OrderQuoteSubscriptionSchedulerTest.scheduler(
+                    orders, registry, transactionManager, timer);
+            manager.start();
+            recovering.start();
+            try {
+                timer.task.run();
+                manager.tick();
+                String[] fields = new String[38];
+                Arrays.fill(fields, "0");
+                fields[0] = "QS0001";
+                fields[3] = "1100";
+                fields[23] = "1";
+                TextMessage quote = new TextMessage("0|H0STASP0|001|" + String.join("^", fields));
+                KisWebSocketHandler oldHandler = manager.handler;
+                KisWebSocketRecoveryTest.Connection old = manager.connection;
+                manager.handler.handleMessage(old.session, quote);
+                assertEquals("PARTIAL", status(order));
+                oldHandler.afterConnectionClosed(old.session, CloseStatus.SERVER_ERROR);
+                timer.task.run();
+                manager.advance(1000);
+                assertEquals(1, manager.connection.messages.size());
+                // 이전 연결의 늦은 호가는 체결 입력으로 다시 사용하지 않습니다.
+                oldHandler.handleMessage(old.session, quote);
+                assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                        "SELECT SUM(trade_quantity) FROM trade_log WHERE order_id=?", Integer.class, order));
+                manager.handler.handleMessage(manager.connection.session, quote);
+                assertEquals("PARTIAL", status(order));
+                manager.handler.handleMessage(manager.connection.session, quote);
+                assertEquals("COMPLETED", status(order));
+                assertEquals(Long.valueOf(96700), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, buyer));
+                assertEquals(Integer.valueOf(3), jdbc.queryForObject("SELECT quantity FROM asset WHERE account_id=?", Integer.class, buyer));
+                timer.task.run();
+                manager.tick();
+                assertFalse(manager.connection.open.get());
+
+                Long cancelled = create(buyer, "BUY", 1, 1100);
+                timer.task.run();
+                manager.tick();
+                manager.handler.afterConnectionClosed(manager.connection.session, CloseStatus.NORMAL);
+                assertTrue(orderService.cancelOrder(cancelled, buyer));
+                timer.task.run();
+                int before = manager.attempts;
+                manager.advance(60000);
+                assertEquals(before, manager.attempts);
+                assertEquals("CANCEL", status(cancelled));
+            } finally { recovering.stop(); }
+        }
     }
 
     private Long account() {
