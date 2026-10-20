@@ -3,7 +3,6 @@ package com.antmillion.kis.handler;
 import static com.antmillion.kis.constant.KisWebSocketTrId.isAskBidTrId;
 import static com.antmillion.kis.constant.KisWebSocketTrId.isPresentPriceTrId;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
  * KIS 웹소켓 데이터 처리 (KisWebSocketHandler)
  * 1. afterConnectionEstablished: 연결 성공 로그 출력 (구독 메시지는 여기서 보내지 않음)
  * 2. handleTextMessage: 서버로부터 메시지 수신 시 자동 실행
- * - PINGPONG: 수신 즉시 에코(Echo) 응답을 보내 세션 유지 및 Manager의 하트비트 갱신
+ * - PINGPONG: 구독 전송과 직렬화한 에코 응답으로 세션 유지
  * - 실시간 데이터: 파이프(|)와 캐럿(^) 기호로 분리된 문자열을 파싱
  * 3. 데이터 전파:
  * - 파싱된 Map 데이터를 SimpMessagingTemplate을 통해 프론트엔드(STOMP)로 즉시 전송
@@ -37,18 +36,26 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 	private final SimpMessagingTemplate messagingTemplate; // STOMP 전송용
 	private ObjectMapper objectMapper;
 	private final TradingEngineService tradingEngineService;
+	private final long connectionAttempt;
 
 	public KisWebSocketHandler(KisWebSocketManager manager, String approvalKey, SimpMessagingTemplate messagingTemplate,
 			ObjectMapper objectMapper, TradingEngineService tradingEngineService) {
+		this(manager, approvalKey, messagingTemplate, objectMapper, tradingEngineService, 0);
+	}
+
+	public KisWebSocketHandler(KisWebSocketManager manager, String approvalKey, SimpMessagingTemplate messagingTemplate,
+			ObjectMapper objectMapper, TradingEngineService tradingEngineService, long connectionAttempt) {
 		this.manager = manager;
 		this.approvalKey = approvalKey;
 		this.messagingTemplate = messagingTemplate;
 		this.objectMapper = objectMapper;
 		this.tradingEngineService = tradingEngineService;
+		this.connectionAttempt = connectionAttempt;
 	}
 
 	@Override
 	public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+		if (connectionAttempt != 0) manager.connectionEstablished(session, connectionAttempt);
 		log.info("### [KIS 웹소켓] 핸드셰이크 성공 및 연결 완료 ###");
 	}
 
@@ -71,16 +78,10 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 		String payload = message.getPayload();
 		// 1. PINGPONG 처리
 		if (payload.contains("PINGPONG")) {
-			manager.updateLastHeartbeatTime(); // 수신 시간 갱신
-			log.info("### PINGPONG 수신 완료 ###");
-			try {
-				session.sendMessage(new TextMessage(payload));
-			} catch (IOException e) {
-				System.err.println("PINGPONG 응답 전송 실패: " + e.getMessage());
-				manager.monitorHealth(); // 재연결
-			}
+			manager.echoHeartbeat(session, payload);
 			return;
 		}
+		if (connectionAttempt != 0 && !manager.isCurrentSession(session)) return;
 
 		// 2. JSON 응답 처리 (최초 구독 성공 알림 등)
 		if (payload.startsWith("{")) {
@@ -157,24 +158,14 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 
 	@Override
 	public void handleTransportError(WebSocketSession session, Throwable exception) {
-		log.error("### [ERROR] 웹소켓 통신 에러: {} ###", exception.getMessage());
+		log.warn("KIS WebSocket transport error: {}", exception.getClass().getSimpleName());
+		manager.connectionLost(session);
 	}
 
 	@Override
 	public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-		int closeCode = status.getCode();
-		String closeReason = status.getReason();
-		log.info("### KIS 연결 종료: {} ###", status.getReason());
-
-		if (closeCode == CloseStatus.NORMAL.getCode() || closeCode == CloseStatus.GOING_AWAY.getCode()) {
-			log.info("### [NORMAL] 정상적인 연결 종료 - 재연결 안 함 ###");
-		} else if (closeCode == CloseStatus.TOO_BIG_TO_PROCESS.getCode()) {
-			log.info("### [TOO_BIG] 메시지 크기 초과로 연결 종료 - 재연결 ###");
-			manager.clearSubscriptionState();
-			manager.monitorHealth();
-		}
-
-
+		log.info("KIS WebSocket closed: {}", status.getCode());
+		manager.connectionLost(session);
 	}
 
 }

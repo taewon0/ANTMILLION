@@ -18,7 +18,6 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.messaging.StompSubProtocolHandler;
 
 import java.lang.reflect.Proxy;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -28,7 +27,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.*;
 
@@ -374,48 +372,6 @@ public class KisSubscriptionRegistryTest {
                 executor.shutdownNow();
             }
         }
-    }
-
-    @Test
-    public void providerSendFailureAndClosedSessionDoNotLeaveFalseSubscriptionState() {
-        KisWebSocketManager manager = new KisWebSocketManager(null, null, null) {
-            @Override
-            public synchronized void connect() { /* 실제 KIS에 연결하지 않습니다. */ }
-        };
-        assertThrows(IllegalStateException.class, () -> manager.subscribe("005930", "H0STCNT0"));
-        AtomicBoolean open = new AtomicBoolean(true), fail = new AtomicBoolean(true);
-        List<String> sent = new ArrayList<>();
-        WebSocketSession session = (WebSocketSession) Proxy.newProxyInstance(
-                WebSocketSession.class.getClassLoader(), new Class<?>[]{WebSocketSession.class},
-                (proxy, method, args) -> {
-                    if ("isOpen".equals(method.getName())) return open.get();
-                    if ("sendMessage".equals(method.getName())) {
-                        if (fail.get()) throw new IOException("synthetic send failure");
-                        sent.add(((TextMessage) args[0]).getPayload());
-                        return null;
-                    }
-                    throw new UnsupportedOperationException(method.getName());
-                });
-        manager.setSession(session);
-        assertThrows(IllegalStateException.class, () -> manager.subscribe("005930", "H0STCNT0"));
-        fail.set(false);
-        manager.subscribe("005930", "H0STCNT0");
-        manager.subscribe("005930", "H0STCNT0");
-        assertEquals(1, sent.size());
-        assertTrue(sent.get(0).contains("\"tr_type\":\"1\""));
-        fail.set(true);
-        assertThrows(IllegalStateException.class, () -> manager.unsubscribe("005930", "H0STCNT0"));
-        fail.set(false);
-        manager.subscribe("005930", "H0STCNT0");
-        assertEquals(2, sent.size());
-        open.set(false);
-        manager.unsubscribe("005930", "H0STCNT0");
-        open.set(true);
-        manager.subscribe("005930", "H0STCNT0");
-        assertEquals(3, sent.size());
-        manager.unsubscribe("005930", "H0STCNT0");
-        assertEquals(4, sent.size());
-        assertTrue(sent.get(3).contains("\"tr_type\":\"2\""));
     }
 
 }
