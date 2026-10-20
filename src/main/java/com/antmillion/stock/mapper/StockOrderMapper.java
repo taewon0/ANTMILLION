@@ -41,9 +41,10 @@ public interface StockOrderMapper {
     StockOrderResponseDTO getOrderByOrderId(@Param("orderId") Long orderId);
 
     /**
-     * 특정 종목의 현재가에 도달하여 체결 조건이 충족된 대기(WAIT) 또는 부분 체결(PARTIAL) 상태의 주문 목록 조회
+     * 특정 종목·주문 방향의 호가 조건이 충족된 대기(WAIT) 또는 부분 체결(PARTIAL) 주문 목록 조회
      */
-    List<StockOrderResponseDTO> findExecutableOrders(@Param("stockCode") String stockCode, @Param("currentPrice") int currentPrice);
+    List<StockOrderResponseDTO> findExecutableOrders(@Param("stockCode") String stockCode,
+            @Param("transactionType") String transactionType, @Param("currentPrice") int currentPrice);
 
     /**
      * 주문 상태 업데이트
