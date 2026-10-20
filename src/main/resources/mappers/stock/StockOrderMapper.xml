@@ -81,6 +81,8 @@
           AND o.status IN ('WAIT', 'PARTIAL')
           AND o.transaction_type = #{transactionType}
           AND (
+               o.order_type = 'MARKET'
+               OR
                (o.transaction_type = 'BUY' AND o.order_price &gt;= #{currentPrice})
                OR 
                (o.transaction_type = 'SELL' AND o.order_price &lt;= #{currentPrice})

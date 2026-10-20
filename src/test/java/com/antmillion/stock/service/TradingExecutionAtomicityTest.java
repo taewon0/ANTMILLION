@@ -156,6 +156,161 @@ public class TradingExecutionAtomicityTest {
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     }
 
+    @Test
+    public void krxMarketOrdersUseOppositeQuotesRegardlessOfSubmittedPrice() throws Exception {
+        assertMarketQuoteExecutions("H0STASP0");
+    }
+
+    @Test
+    public void unifiedMarketOrdersUseOppositeQuotesRegardlessOfSubmittedPrice() throws Exception {
+        assertMarketQuoteExecutions("H0UNASP0");
+    }
+
+    private void assertMarketQuoteExecutions(String trId) throws Exception {
+        Long seller = seller(3);
+        Long buy = order(accountId, "BUY", "MARKET", 3, 1000);
+        Long sell = order(seller, "SELL", "MARKET", 3, 1200);
+
+        quote(trId, 1100, 2, 1000, 1);
+        assertEquals("PARTIAL", status(buy));
+        assertEquals("PARTIAL", status(sell));
+        assertTrade(buy, 1100, 2);
+        assertTrade(sell, 1000, 1);
+        assertEquals(Long.valueOf(997800), balance(accountId));
+        assertEquals(Long.valueOf(1001000), balance(seller));
+
+        // A later quote may execute the remaining quantity at a different price.
+        quote(trId, 1200, 1, 900, 2);
+        assertEquals("COMPLETED", status(buy));
+        assertEquals("COMPLETED", status(sell));
+        assertEquals(Arrays.asList(1100L, 1200L), jdbc.queryForList(
+                "SELECT trade_price FROM trade_log WHERE order_id=? ORDER BY trade_id", Long.class, buy));
+        assertEquals(Arrays.asList(1000L, 900L), jdbc.queryForList(
+                "SELECT trade_price FROM trade_log WHERE order_id=? ORDER BY trade_id", Long.class, sell));
+        assertEquals(Long.valueOf(996600), balance(accountId));
+        assertEquals(Long.valueOf(1002800), balance(seller));
+        assertEquals(Integer.valueOf(3), assetMapper.getQuantityByAccountAndStock(accountId, "ATOM01"));
+        assertEquals(Long.valueOf(3400), assetMapper.getAssetForSell(accountId, "ATOM01").getPurchaseAmount());
+        assertNull(assetMapper.getAssetForSell(seller, "ATOM01"));
+        Map<String, Object> pnl = jdbc.queryForMap(
+                "SELECT SUM(p.sell_amount) AS amount,SUM(p.cost_basis) AS cost,SUM(p.realized_profit) AS profit,"
+                + "COUNT(*) AS trades FROM realized_pnl p JOIN trade_log t ON t.trade_id=p.trade_id "
+                + "WHERE t.order_id=? AND p.account_id=?", sell, seller);
+        assertEquals(2800L, ((Number) pnl.get("amount")).longValue());
+        assertEquals(2700L, ((Number) pnl.get("cost")).longValue());
+        assertEquals(100L, ((Number) pnl.get("profit")).longValue());
+        assertEquals(2L, ((Number) pnl.get("trades")).longValue());
+        assertEquals(Integer.valueOf(1000), orderMapper.getOrderByOrderId(buy).getOrderPrice());
+        assertEquals(Integer.valueOf(1200), orderMapper.getOrderByOrderId(sell).getOrderPrice());
+    }
+
+    @Test
+    public void marketAndLimitOrdersShareExistingFifoWithoutBypassingLimitPrices() throws Exception {
+        Long seller = seller(4);
+        Long blockedBuy = order(accountId, "BUY", 1, 1099);
+        Long blockedSell = order(seller, "SELL", 1, 1001);
+        Long firstBuy = order(accountId, "BUY", 1, 1100);
+        Long firstSell = order(seller, "SELL", 1, 1000);
+        Long marketBuy = order(accountId, "BUY", "MARKET", 2, 1000);
+        Long marketSell = order(seller, "SELL", "MARKET", 2, 1200);
+        Long lastBuy = order(accountId, "BUY", 1, 1100);
+        Long lastSell = order(seller, "SELL", 1, 1000);
+
+        quote("H0STASP0", 1100, 2, 1000, 2);
+        for (Long id : Arrays.asList(firstBuy, firstSell)) assertEquals("COMPLETED", status(id));
+        for (Long id : Arrays.asList(marketBuy, marketSell)) assertEquals("PARTIAL", status(id));
+        for (Long id : Arrays.asList(blockedBuy, blockedSell, lastBuy, lastSell)) assertEquals("WAIT", status(id));
+
+        quote("H0STASP0", 1100, 2, 1000, 2);
+        for (Long id : Arrays.asList(firstBuy, marketBuy, lastBuy)) {
+            assertEquals("COMPLETED", status(id));
+            assertTrade(id, 1100, id.equals(marketBuy) ? 2 : 1);
+        }
+        for (Long id : Arrays.asList(firstSell, marketSell, lastSell)) {
+            assertEquals("COMPLETED", status(id));
+            assertTrade(id, 1000, id.equals(marketSell) ? 2 : 1);
+        }
+        assertEquals("WAIT", status(blockedBuy));
+        assertEquals("WAIT", status(blockedSell));
+        assertEquals(Long.valueOf(995600), balance(accountId));
+        assertEquals(Long.valueOf(1004000), balance(seller));
+    }
+
+    @Test
+    public void nonPositivePricesCannotMutateMarketOrLimitOrders() {
+        assertInvalidQuoteDoesNotMutateOrders(true);
+    }
+
+    @Test
+    public void nonPositiveLiquidityCannotMutateMarketOrLimitOrders() {
+        assertInvalidQuoteDoesNotMutateOrders(false);
+    }
+
+    private void assertInvalidQuoteDoesNotMutateOrders(boolean invalidPrice) {
+        Long seller = seller(4);
+        for (String type : Arrays.asList("LIMIT", "MARKET")) {
+            order(accountId, "BUY", type, 1, 1100);
+            order(seller, "SELL", type, 1, 1000);
+        }
+        Map<String, List<Map<String, Object>>> before = snapshot();
+        for (String direction : Arrays.asList("BUY", "SELL")) {
+            for (int invalid : new int[]{0, -1}) {
+                engine.processExecution("ATOM01", direction, invalidPrice ? invalid : 1050, invalidPrice ? 4 : invalid);
+                assertEquals(before, snapshot());
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            }
+        }
+    }
+
+    @Test
+    public void zeroAskDoesNotBlockValidMarketSell() throws Exception {
+        Long seller = seller(1);
+        Long buy = order(accountId, "BUY", "MARKET", 1, 1000);
+        Long sell = order(seller, "SELL", "MARKET", 1, 1200);
+        quote("H0STASP0", 0, 1, 1000, 1);
+        assertEquals("WAIT", status(buy));
+        assertEquals(Long.valueOf(1000000), balance(accountId));
+        assertNull(assetMapper.getAssetForSell(accountId, "ATOM01"));
+        assertEquals("COMPLETED", status(sell));
+        assertTrade(sell, 1000, 1);
+    }
+
+    @Test
+    public void zeroBidDoesNotBlockValidMarketBuy() throws Exception {
+        Long seller = seller(1);
+        Long buy = order(accountId, "BUY", "MARKET", 1, 1000);
+        Long sell = order(seller, "SELL", "MARKET", 1, 1200);
+        quote("H0UNASP0", 1100, 1, 0, 1);
+        assertEquals("COMPLETED", status(buy));
+        assertTrade(buy, 1100, 1);
+        assertEquals("WAIT", status(sell));
+        assertEquals(Long.valueOf(1000000), balance(seller));
+        assertEquals(Integer.valueOf(1), assetMapper.getQuantityByAccountAndStock(seller, "ATOM01"));
+    }
+
+    @Test
+    public void laterMarketBuyWithInsufficientBalanceAtQuotePriceRollsBackWholeInvocation() {
+        Long first = order(accountId, "BUY", 1, 1100);
+        Long secondAccount = account(1050);
+        Long second = order(secondAccount, "BUY", "MARKET", 1, 1000);
+        Map<String, List<Map<String, Object>>> before = snapshot();
+        assertThrows(RuntimeException.class, () -> engine.processExecution("ATOM01", "BUY", 1100, 2));
+        assertEquals(before, snapshot());
+        assertEquals("WAIT", status(first));
+        assertEquals("WAIT", status(second));
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
+    @Test
+    public void marketSellWithInsufficientHoldingRollsBackAtQuotePrice() {
+        holding(1, 900);
+        order(accountId, "SELL", "MARKET", 2, 1200);
+        Map<String, List<Map<String, Object>>> before = snapshot();
+        assertThrows(IllegalStateException.class, () -> engine.processExecution("ATOM01", "SELL", 1000, 2));
+        assertEquals(before, snapshot());
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
     private Long seller(int quantity) {
         Long seller = account(1000000);
         jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) "
@@ -462,10 +617,14 @@ public class TradingExecutionAtomicityTest {
     }
 
     private Long order(Long account, String type, int quantity, int price) {
+        return order(account, type, "LIMIT", quantity, price);
+    }
+
+    private Long order(Long account, String type, String orderType, int quantity, int price) {
         // Distinct timestamps make the existing FIFO SQL deterministic for multi-order failures.
         Timestamp created = Timestamp.valueOf(LocalDateTime.of(2026, 1, 1, 0, 0).plusSeconds(++orderSequence));
         jdbc.update("INSERT INTO stock_order(account_id,stock_code,transaction_type,order_type,quantity,order_price,status,created_at,updated_at) "
-                + "VALUES(?,'ATOM01',?,'LIMIT',?,?,'WAIT',?,?)", account, type, quantity, price, created, created);
+                + "VALUES(?,'ATOM01',?,?,?,?,'WAIT',?,?)", account, type, orderType, quantity, price, created, created);
         return jdbc.queryForObject("SELECT order_id FROM stock_order WHERE account_id=? AND created_at=?", Long.class, account, created);
     }
 
