@@ -1448,6 +1448,7 @@ window.checkMockStatus = checkMockStatus;
     const presetBtns = document.querySelectorAll('.detail-preset-btn');
     
     let currentOrderType = 'limit';
+    let hasInitializedLimitPrice = false;
     let currentTransactionType = 'buy';
     let currentPrice = 0;
     let availableBalance = 0;
@@ -1559,6 +1560,7 @@ window.checkMockStatus = checkMockStatus;
         // 가격 입력 필드 초기화
         if (priceInput && currentPrice > 0) {
             priceInput.value = currentPrice.toLocaleString();
+            hasInitializedLimitPrice = true;
             console.log('✓ 가격 초기화:', priceInput.value);
         }
         
@@ -1582,6 +1584,7 @@ window.checkMockStatus = checkMockStatus;
     // 지정가/시장가 탭 전환
     if (tabLimit) {
         tabLimit.addEventListener('click', function() {
+            if (currentOrderType === 'limit') return;
             console.log('지정가 선택');
             currentOrderType = 'limit';
             tabLimit.classList.add('detail-active-type');
@@ -1592,6 +1595,7 @@ window.checkMockStatus = checkMockStatus;
             priceInput.disabled = false;
             getCurrentPrice();
             priceInput.value = currentPrice.toLocaleString();
+            hasInitializedLimitPrice = currentPrice > 0;
             updateOrderAmount();
         });
     }
@@ -1667,6 +1671,7 @@ window.checkMockStatus = checkMockStatus;
     if (priceInput) {
         priceInput.addEventListener('input', function() {
             if (currentOrderType === 'limit') {
+                hasInitializedLimitPrice = true;
                 let value = this.value.replace(/[^0-9]/g, '');
                 if (value) {
                     this.value = parseInt(value).toLocaleString();
@@ -1950,12 +1955,11 @@ window.checkMockStatus = checkMockStatus;
             if (prevPrice !== currentPrice) {
                 console.log('가격 변동:', prevPrice.toLocaleString() + '원 → ' + currentPrice.toLocaleString() + '원');
                 
-                // 지정가이고 입력값이 이전 가격이었으면 새 가격으로 업데이트
-                if (currentOrderType === 'limit') {
-                    const inputPrice = parseInt(priceInput.value.replace(/[^0-9]/g, '')) || 0;
-                    if (inputPrice === 0 || inputPrice === prevPrice) {
-                        priceInput.value = currentPrice.toLocaleString();
-                    }
+                // 첫 시세가 늦게 도착한 경우만 초기화하고, 지정가 입력은 이후 유지합니다.
+                if (currentOrderType === 'limit' && !hasInitializedLimitPrice && currentPrice > 0) {
+                    priceInput.value = currentPrice.toLocaleString();
+                    hasInitializedLimitPrice = true;
+                    updateOrderAmount();
                 }
                 
                 // 시장가일 때 자동 업데이트
