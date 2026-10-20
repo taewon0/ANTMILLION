@@ -115,6 +115,86 @@ public class TradingExecutionAtomicityTest {
     }
 
     @Test
+    public void missingHoldingRollsBackSell() {
+        order(accountId, "SELL", 1, 1200);
+        assertSellFailureRollsBack(engine, 1);
+    }
+
+    @Test
+    public void insufficientHoldingRollsBackSell() {
+        holding(1, 1000);
+        order(accountId, "SELL", 2, 1200);
+        assertSellFailureRollsBack(engine, 2);
+    }
+
+    @Test
+    public void zeroHoldingRollsBackSell() {
+        holding(0, 0);
+        order(accountId, "SELL", 1, 1200);
+        assertSellFailureRollsBack(engine, 1);
+    }
+
+    @Test
+    public void nullHoldingQuantityRollsBackSell() {
+        holding(1, 1000);
+        jdbc.update("UPDATE asset SET quantity=NULL WHERE account_id=?", accountId);
+        order(accountId, "SELL", 1, 1200);
+        assertSellFailureRollsBack(engine, 1);
+    }
+
+    @Test
+    public void zeroRowAssetDeductionRollsBackSellWithoutCreditingBalance() {
+        assertZeroRowSellRollsBack("updateAssetSellWithCostBasis");
+    }
+
+    @Test
+    public void zeroRowBalanceCreditRollsBackSell() {
+        assertZeroRowSellRollsBack("addBalance");
+    }
+
+    @Test
+    public void missingHoldingOnLaterSellRollsBackEarlierSellInSameInvocation() {
+        holding(1, 1000);
+        Long first = order(accountId, "SELL", 1, 1200);
+        Long secondAccount = account(2000);
+        Long second = order(secondAccount, "SELL", 1, 1200);
+        assertSellFailureRollsBack(engine, 2);
+        assertEquals("WAIT", status(first));
+        assertEquals("WAIT", status(second));
+    }
+
+    @Test
+    public void partialSellRoundsDownCostAndFullSellConsumesRemainingCost() {
+        holding(3, 1000);
+        Long sell = order(accountId, "SELL", 3, 1200);
+        engine.processExecution("ATOM01", 1200, 1);
+        assertEquals("PARTIAL", status(sell));
+        assertEquals(Long.valueOf(1001200), balance(accountId));
+        assertEquals(Integer.valueOf(2), assetMapper.getQuantityByAccountAndStock(accountId, "ATOM01"));
+        assertEquals(Long.valueOf(667), assetMapper.getAssetForSell(accountId, "ATOM01").getPurchaseAmount());
+
+        engine.processExecution("ATOM01", 1200, 2);
+        assertEquals("COMPLETED", status(sell));
+        assertEquals(Long.valueOf(1003600), balance(accountId));
+        assertNull(assetMapper.getAssetForSell(accountId, "ATOM01"));
+        List<Map<String, Object>> pnl = jdbc.queryForList(
+                "SELECT p.*,t.order_id,t.trade_quantity FROM realized_pnl p "
+                + "JOIN trade_log t ON t.trade_id=p.trade_id WHERE p.account_id=? ORDER BY p.trade_id", accountId);
+        assertEquals(2, pnl.size());
+        long[] costs = {333, 667};
+        long[] profits = {867, 1733};
+        for (int i = 0; i < pnl.size(); i++) {
+            Map<String, Object> row = pnl.get(i);
+            assertEquals(sell.longValue(), ((Number) row.get("order_id")).longValue());
+            assertEquals(i + 1, ((Number) row.get("trade_quantity")).intValue());
+            assertEquals(i + 1, ((Number) row.get("sell_quantity")).intValue());
+            assertEquals(costs[i], ((Number) row.get("cost_basis")).longValue());
+            assertEquals(profits[i], ((Number) row.get("realized_profit")).longValue());
+            assertEquals(333.33, ((Number) row.get("avg_price")).doubleValue(), 0.001);
+        }
+    }
+
+    @Test
     public void failureAfterBuyAssetWriteRollsBackTradeOrderBalanceAndAsset() {
         order(accountId, "BUY", 3, 1000);
         assertLateFailureRollsBack("upsertAssetBuy", 1000, 3);
@@ -193,6 +273,44 @@ public class TradingExecutionAtomicityTest {
                 () -> engine(failing).processExecution("ATOM01", price, quantity)));
         assertEquals(before, snapshot());
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
+    private void holding(int quantity, long purchaseAmount) {
+        jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) "
+                + "VALUES(?,'ATOM01',?,?,333.33)", accountId, quantity, purchaseAmount);
+    }
+
+    private void assertSellFailureRollsBack(TradingEngineService service, int quantity) {
+        Map<String, List<Map<String, Object>>> before = snapshot();
+        assertThrows(IllegalStateException.class, () -> service.processExecution("ATOM01", 1200, quantity));
+        assertEquals(before, snapshot());
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
+    private void assertZeroRowSellRollsBack(String failingMethod) {
+        holding(2, 1000);
+        order(accountId, "SELL", 1, 1200);
+        AssetMapper zeroRows = (AssetMapper) Proxy.newProxyInstance(AssetMapper.class.getClassLoader(),
+                new Class<?>[]{AssetMapper.class}, (proxy, method, args) -> {
+                    if ("updateAssetSellWithCostBasis".equals(failingMethod) && "addBalance".equals(method.getName())) {
+                        fail("A rejected asset deduction must not credit the balance");
+                    }
+                    boolean rejected = failingMethod.equals(method.getName());
+                    if (rejected && "updateAssetSellWithCostBasis".equals(failingMethod)) {
+                        // Force the real conditional UPDATE to affect zero rows after a valid holding read.
+                        jdbc.update("UPDATE asset SET quantity=0 WHERE account_id=?", accountId);
+                    }
+                    Object[] actualArgs = rejected && "addBalance".equals(failingMethod)
+                            ? new Object[]{-1L, args[1]} : args;
+                    try {
+                        Object result = method.invoke(assetMapper, actualArgs);
+                        if (rejected) assertEquals("Real SQL must report zero affected rows", 0, result);
+                        return result;
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        assertSellFailureRollsBack(engine(zeroRows), 1);
     }
 
     private TradingEngineService engine(AssetMapper assets) {

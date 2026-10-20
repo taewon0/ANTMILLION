@@ -81,43 +81,51 @@ public class TradingEngineService {
                 assetMapper.upsertAssetBuy(order.getAccountId(), stockCode, actualExecQty, currentPrice, tradeAmount);
             } else {
                 // ===== 매도: 실현손익 계산 및 저장 (보유주식 차감 전) =====
-                long costBasis = 0;
                 AssetDTO asset = assetMapper.getAssetForSell(order.getAccountId(), stockCode);
-                if (asset != null) {
-                    long totalBuyAmount = asset.getPurchaseAmount();
-                    int holdingQty = asset.getQuantity();
-                    double avgPrice = asset.getAvgPrice();
+                if (asset == null || asset.getQuantity() == null || asset.getQuantity() <= 0
+                        || asset.getQuantity() < actualExecQty) {
+                    throw new IllegalStateException("보유 자산 누락 또는 수량 부족으로 매도 체결 불가");
+                }
+                long totalBuyAmount = asset.getPurchaseAmount();
+                int holdingQty = asset.getQuantity();
+                double avgPrice = asset.getAvgPrice();
 
-                    // 차감원가 계산
-                    if (actualExecQty >= holdingQty) {
-                        // 전량매도 : 차감원가 = 남은 총 매수금액 전부
-                        costBasis = totalBuyAmount;
-                    } else {
-                        // 부분매도 : 차감원가 = floor(매입금액 * 매도수량) / 보유수량
-                        costBasis = (long) Math.floor((double) totalBuyAmount * actualExecQty / holdingQty);
-                    }
-
-                    // 실현손익 = 매도금액 - 차감원가
-                    long realizedProfit = tradeAmount - costBasis;
-
-                    // 실현손익 테이블에 저장
-                    String sellDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                    realizedPnlMapper.insertRealizedPnl(
-                        stockCode,
-                        tradeId,
-                            order.getAccountId(),
-                            sellDate,
-                            actualExecQty,
-                            tradeAmount,
-                            costBasis,
-                            realizedProfit,
-                            avgPrice
-                    );
+                // 차감원가 계산
+                long costBasis;
+                if (actualExecQty == holdingQty) {
+                    // 전량매도 : 차감원가 = 남은 총 매수금액 전부
+                    costBasis = totalBuyAmount;
+                } else {
+                    // 부분매도 : 차감원가 = floor(매입금액 * 매도수량 / 보유수량)
+                    costBasis = (long) Math.floor((double) totalBuyAmount * actualExecQty / holdingQty);
                 }
 
+                // 실현손익 = 매도금액 - 차감원가
+                long realizedProfit = tradeAmount - costBasis;
+
+                // 실현손익 테이블에 저장
+                String sellDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                realizedPnlMapper.insertRealizedPnl(
+                    stockCode,
+                    tradeId,
+                        order.getAccountId(),
+                        sellDate,
+                        actualExecQty,
+                        tradeAmount,
+                        costBasis,
+                        realizedProfit,
+                        avgPrice
+                );
+
                 // 1. 매도: 주식 출고 및 잔액 입금
-                assetMapper.updateAssetSellWithCostBasis(order.getAccountId(), stockCode, actualExecQty, costBasis);
-                assetMapper.addBalance(order.getAccountId(), tradeAmount);
+                int assetRows = assetMapper.updateAssetSellWithCostBasis(order.getAccountId(), stockCode, actualExecQty, costBasis);
+                if (assetRows != 1) {
+                    throw new IllegalStateException("매도 자산 차감 실패");
+                }
+                int balanceRows = assetMapper.addBalance(order.getAccountId(), tradeAmount);
+                if (balanceRows != 1) {
+                    throw new IllegalStateException("매도 잔고 입금 실패");
+                }
                 
                 // 2. DB에 반영된 최신 수량을 다시 확인
                 Integer currentQty = assetMapper.getQuantityByAccountAndStock(order.getAccountId(), stockCode);
