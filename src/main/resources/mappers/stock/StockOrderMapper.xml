@@ -68,6 +68,11 @@
         SELECT * FROM stock_order WHERE order_id = #{orderId}
     </select>
 
+    <select id="getOrderByOrderIdForUpdate" resultType="com.antmillion.stock.dto.StockOrderResponseDTO"
+            useCache="false" flushCache="true">
+        SELECT * FROM stock_order WHERE order_id = #{orderId} FOR UPDATE
+    </select>
+
     <select id="findExecutableOrders" resultType="com.antmillion.stock.dto.StockOrderResponseDTO">
         SELECT 
             o.*, 
@@ -88,7 +93,7 @@
                (o.transaction_type = 'SELL' AND o.order_price &lt;= #{currentPrice})
           )
         GROUP BY o.order_id 
-        ORDER BY o.created_at ASC
+        ORDER BY o.created_at ASC, o.order_id ASC
     </select>
 
     <update id="updateOrderStatus">
@@ -96,6 +101,7 @@
         SET status = #{status}, 
             updated_at = NOW() 
         WHERE order_id = #{orderId}
+          AND status IN ('WAIT', 'PARTIAL')
     </update>
 
     <update id="cancelRemainingOrders">

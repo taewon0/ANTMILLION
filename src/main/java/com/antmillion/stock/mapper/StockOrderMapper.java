@@ -40,6 +40,9 @@ public interface StockOrderMapper {
      */
     StockOrderResponseDTO getOrderByOrderId(@Param("orderId") Long orderId);
 
+    // 체결·취소·정정은 트랜잭션 안에서 이 행을 먼저 잠급니다.
+    StockOrderResponseDTO getOrderByOrderIdForUpdate(@Param("orderId") Long orderId);
+
     /**
      * 특정 종목·주문 방향의 호가 조건이 충족된 대기(WAIT) 또는 부분 체결(PARTIAL) 주문 목록 조회
      */
@@ -49,7 +52,7 @@ public interface StockOrderMapper {
     /**
      * 주문 상태 업데이트
      */
-    void updateOrderStatus(@Param("orderId") Long orderId, @Param("status") String status);
+    int updateOrderStatus(@Param("orderId") Long orderId, @Param("status") String status);
     
     /**
      * 장 시작 전 대기 목록 일괄 취소 처리

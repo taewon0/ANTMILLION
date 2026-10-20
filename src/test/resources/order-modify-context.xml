@@ -17,5 +17,6 @@
         <constructor-arg ref="tradeLogMapper"/>
         <constructor-arg ref="accountMapper"/>
         <constructor-arg ref="assetMapper"/>
+        <constructor-arg ref="transactionManager"/>
     </bean>
 </beans>

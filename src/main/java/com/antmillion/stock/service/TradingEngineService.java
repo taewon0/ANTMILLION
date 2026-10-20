@@ -55,10 +55,27 @@ public class TradingEngineService {
         
         int remainingMarketQty = availableQty; // 시장 호가 잔량
 
-        for (StockOrderResponseDTO order : orders) {
+        for (StockOrderResponseDTO candidate : orders) {
             if (remainingMarketQty <= 0) break;
 
+            // 후보 조회는 잠금 전 스냅샷입니다. 주문 행을 먼저 잠그고 최신 값으로 다시 판단합니다.
+            StockOrderResponseDTO order = stockOrderMapper.getOrderByOrderIdForUpdate(candidate.getOrderId());
+            if (order == null || !("WAIT".equals(order.getStatus()) || "PARTIAL".equals(order.getStatus()))
+                    || !stockCode.equals(order.getStockCode()) || !transactionType.equals(order.getTransactionType())) {
+                continue;
+            }
+            if (!"MARKET".equals(order.getOrderType())
+                    && ("BUY".equals(transactionType) ? order.getOrderPrice() < currentPrice
+                            : order.getOrderPrice() > currentPrice)) {
+                continue;
+            }
+            // 잠금 대기 전에 생성된 REPEATABLE READ 스냅샷과 MyBatis 조회 캐시를 사용하지 않습니다.
+            int executedQuantity = tradeLogMapper.getExecutedQuantitiesForUpdate(order.getOrderId())
+                    .stream().mapToInt(Integer::intValue).sum();
+            order.setExecutedQuantity(executedQuantity);
+
             int unexecutedQty = order.getUnexecutedQuantity();
+            if (unexecutedQty <= 0) continue;
             // 이번에 체결할 수량 (시장 물량 vs 주문 미체결량 중 최소값)
             int actualExecQty = Math.min(unexecutedQty, remainingMarketQty);
 
@@ -74,7 +91,9 @@ public class TradingEngineService {
             // 3. 주문 상태 업데이트 (누적 체결량 다시 확인하여 상태 변경)
             int totalExecutedSoFar = order.getExecutedQuantity() + actualExecQty;
             String status = (totalExecutedSoFar >= order.getQuantity()) ? "COMPLETED" : "PARTIAL";
-            stockOrderMapper.updateOrderStatus(order.getOrderId(), status);
+            if (stockOrderMapper.updateOrderStatus(order.getOrderId(), status) != 1) {
+                throw new IllegalStateException("체결 주문 상태 갱신 실패");
+            }
 
             // 4. 자산 및 잔액 반영
             long tradeAmount = (long)currentPrice * actualExecQty;

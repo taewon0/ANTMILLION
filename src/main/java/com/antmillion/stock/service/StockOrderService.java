@@ -6,6 +6,8 @@ import java.util.List;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.antmillion.auth.mapper.AccountMapper;
 import com.antmillion.stock.dto.StockOrderDTO;
@@ -16,18 +18,26 @@ import com.antmillion.stock.mapper.StockOrderMapper;
 import com.antmillion.stock.mapper.TradeLogMapper;
 import com.antmillion.user.dto.AccountDTO;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class StockOrderService {
 
 	private final StockOrderMapper stockOrderMapper;
 	private final TradeLogMapper tradeLogMapper;
 	private final AccountMapper accountMapper;
 	private final AssetMapper assetMapper;
+	private final TransactionTemplate transaction;
+
+    public StockOrderService(StockOrderMapper stockOrderMapper, TradeLogMapper tradeLogMapper,
+            AccountMapper accountMapper, AssetMapper assetMapper, PlatformTransactionManager transactionManager) {
+        this.stockOrderMapper = stockOrderMapper;
+        this.tradeLogMapper = tradeLogMapper;
+        this.accountMapper = accountMapper;
+        this.assetMapper = assetMapper;
+        this.transaction = new TransactionTemplate(transactionManager);
+    }
 	
 	// 주문 생성
     @Transactional
@@ -80,10 +90,13 @@ public class StockOrderService {
 	}
 	
 	// 주문 취소
-	@Transactional
 	public boolean cancelOrder(Long orderId, Long accountId) {
+		return transaction.execute(status -> cancelLockedOrder(orderId, accountId));
+	}
+
+	private boolean cancelLockedOrder(Long orderId, Long accountId) {
 	    // 주문 존재 여부 및 현재 상태 확인
-	    StockOrderResponseDTO order = stockOrderMapper.getOrderByOrderId(orderId);
+	    StockOrderResponseDTO order = stockOrderMapper.getOrderByOrderIdForUpdate(orderId);
 	    if (order == null) {
 	        throw new IllegalArgumentException("존재하지 않는 주문입니다.");
 	    }
@@ -107,8 +120,11 @@ public class StockOrderService {
 	}
 	
 	// 주문 정정
-	@Transactional
 	public boolean modifyOrder(Long accountId, StockOrderDTO orderRequest) {
+		return transaction.execute(status -> modifyLockedOrder(accountId, orderRequest));
+	}
+
+	private boolean modifyLockedOrder(Long accountId, StockOrderDTO orderRequest) {
 		if (accountId == null) {
 			throw new AccessDeniedException("주문을 정정할 권한이 없습니다.");
 		}
@@ -119,7 +135,7 @@ public class StockOrderService {
 				|| orderRequest.getOrderPrice() == null || orderRequest.getOrderPrice() <= 0) {
 			throw new IllegalArgumentException("정정 수량과 가격은 양의 정수여야 합니다.");
 		}
-		StockOrderResponseDTO original = stockOrderMapper.getOrderByOrderId(orderRequest.getOrderId());
+		StockOrderResponseDTO original = stockOrderMapper.getOrderByOrderIdForUpdate(orderRequest.getOrderId());
 		if (original == null) {
 			throw new IllegalArgumentException("존재하지 않는 주문입니다.");
 		}
@@ -130,7 +146,8 @@ public class StockOrderService {
 			throw new IllegalArgumentException("대기 중인 주문만 정정할 수 있습니다.");
 		}
 	    // 이미 체결된 수량 합산 조회 (TradeLog 이용)
-	    int executedQty = tradeLogMapper.getTotalExecutedQty(original.getOrderId());
+	    int executedQty = tradeLogMapper.getExecutedQuantitiesForUpdate(original.getOrderId())
+	            .stream().mapToInt(Integer::intValue).sum();
 	    
 	    // 이미 체결된 수량보다 적게 정정하는 건 절대 금지
 	    if (orderRequest.getQuantity() < executedQty) {
