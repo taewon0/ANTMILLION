@@ -86,7 +86,7 @@ public class StockSyncLock {
                     if (!result.next() || result.getInt(1) != 1) throw new SQLException("Stock sync lock release failed");
                 }
             } catch (SQLException e) {
-                // A pooled connection must not be returned with a session lock still held.
+                // 세션 잠금이 남아 있는 연결을 풀에 반환하지 않습니다.
                 abortAndClose(connection);
                 throw e;
             }

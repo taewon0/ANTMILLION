@@ -61,7 +61,7 @@ public class StockSyncJob {
             }
             outcome = runLocked(handle, date, runId);
         } catch (Exception e) {
-            // A cleanup error must not relabel an already committed successful run as failed.
+            // 정리 오류가 발생해도 이미 커밋된 성공 기록을 실패로 바꾸지 않습니다.
             log.error("STOCK_SYNC_RESOURCE_FAILURE date={} runId={} outcome={} type={}",
                     date, runId, outcome, e.getClass().getSimpleName());
         }

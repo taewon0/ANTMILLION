@@ -80,7 +80,7 @@ public class KakaoController {
 		// state 1회성: 바로 삭제 권장
 		CookieUtil.deleteCookie(response, "KAKAO_STATE");
 
-		// 4) code -> token -> user/me
+		// 4) 인증 코드로 토큰을 발급받은 뒤 사용자 정보를 조회합니다.
 		try {
 			var token = kakaoService.exchangeToken(code);
 			if (token == null || token.getAccessToken() == null) {

@@ -31,9 +31,9 @@ public enum KisWebSocketTrId {
         LocalTime marketClose = LocalTime.of(15, 30);
 
         if (now.isBefore(marketClose)) {
-            return KRX_PRESENT.getTrId(); // H0STCNT0
+            return KRX_PRESENT.getTrId(); // KRX 현재가 TR: H0STCNT0
         } else {
-            return UNIFIED_PRESENT.getTrId(); // H0UNCNT0
+            return UNIFIED_PRESENT.getTrId(); // 통합 현재가 TR: H0UNCNT0
         }
     }
 
@@ -45,9 +45,9 @@ public enum KisWebSocketTrId {
         LocalTime marketClose = LocalTime.of(15, 30);
 
         if (now.isBefore(marketClose)) {
-            return KRX_ASK_BID.getTrId(); // H0STASP0
+            return KRX_ASK_BID.getTrId(); // KRX 호가 TR: H0STASP0
         } else {
-            return UNIFIED_ASK_BID.getTrId(); // H0UNASP0
+            return UNIFIED_ASK_BID.getTrId(); // 통합 호가 TR: H0UNASP0
         }
     }
 

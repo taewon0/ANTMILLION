@@ -1,20 +1,20 @@
-#DB
+#데이터베이스
 db.driver=DRIVER NAME
 db.url=YOUR URL
 db.username=YOUR NAME
 db.password=YOUR PASSWORD
-#Redis
+#레디스
 redis.host=VALUE
 redis.port=VALUE
-# JWT
+# JWT 토큰 설정
 jwt.secret=VALUE
 jwt.access-ttl-seconds=900
 jwt.refresh-ttl-seconds=1209600
-#Kakao
+#카카오 연동
 kakao.client-id=VALUE
 kakao.client-secret=
 kakao.redirect-uri=VALUE
-# Mail
+# 메일 설정
 mail.host=VALUE
 mail.port=VALUE
 mail.username=VALUE
@@ -28,7 +28,7 @@ mail.debug=false
 mail.verify.code-ttl-seconds=300
 mail.verify.verified-ttl-seconds=1800
 
-# Daily stock sync: explicitly enable only after applying migrations 001 and 002.
+# 일일 종목 동기화는 마이그레이션 001·002를 적용한 뒤 명시적으로 활성화합니다.
 stock.sync.enabled=false
 stock.sync.cron=0 0 18 * * *
 stock.sync.zone=Asia/Seoul

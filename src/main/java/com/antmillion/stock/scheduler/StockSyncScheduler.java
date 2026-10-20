@@ -26,7 +26,7 @@ public class StockSyncScheduler implements SmartLifecycle {
     @Override
     public synchronized void start() {
         if (running || !properties.isEnabled()) return;
-        // Keep this scheduler private so Spring's existing @Scheduled tasks retain their executor.
+        // 기존 스프링 @Scheduled 작업의 실행기를 유지하도록 전용 스케줄러를 사용합니다.
         scheduler = createScheduler();
         scheduler.setPoolSize(1);
         scheduler.setThreadNamePrefix("stock-sync-");

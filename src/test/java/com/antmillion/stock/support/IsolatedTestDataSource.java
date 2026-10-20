@@ -8,7 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-/** Only the disposable Compose database is allowed; never reads db.properties. */
+/** 일회성 Compose 테스트 DB만 허용하며 db.properties는 읽지 않습니다. */
 public final class IsolatedTestDataSource {
     static final String URL = "jdbc:mysql://127.0.0.1:13307/antmillion_test"
             + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul";
@@ -24,7 +24,7 @@ public final class IsolatedTestDataSource {
     }
 
     static HikariDataSource create(String url, String username, String password) throws SQLException {
-        // Validate before constructing the pool: rejected settings cannot open a socket.
+        // 잘못된 설정으로 연결이 열리지 않도록 풀을 생성하기 전에 검증합니다.
         validateSettings(url, username, password);
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(url);

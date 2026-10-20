@@ -459,7 +459,7 @@ public class TradingEngineServiceTest {
         jdbcTemplate.update(
                 "INSERT INTO stock_order (account_id, stock_code, transaction_type, order_type, " +
                         "quantity, order_price, status, created_at, updated_at) " +
-                        "VALUES (?, ?, 'BUY', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // PENDING → WAIT
+                        "VALUES (?, ?, 'BUY', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // 주문 대기 상태 표기를 PENDING에서 WAIT로 변경
                 testAccountId, TEST_STOCK_CODE, quantity, price
         );
     }
@@ -468,7 +468,7 @@ public class TradingEngineServiceTest {
         jdbcTemplate.update(
                 "INSERT INTO stock_order (account_id, stock_code, transaction_type, order_type, " +
                         "quantity, order_price, status, created_at, updated_at) " +
-                        "VALUES (?, ?, 'SELL', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // PENDING → WAIT
+                        "VALUES (?, ?, 'SELL', 'LIMIT', ?, ?, 'WAIT', NOW(), NOW())",  // 주문 대기 상태 표기를 PENDING에서 WAIT로 변경
                 testAccountId, TEST_STOCK_CODE, quantity, price
         );
     }

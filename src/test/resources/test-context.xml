@@ -14,11 +14,11 @@
            http://mybatis.org/schema/mybatis-spring
            http://mybatis.org/schema/mybatis-spring.xsd">
 
-    <!-- No application properties/component scan: only the guarded disposable DB. -->
+    <!-- 애플리케이션 설정 파일과 컴포넌트 스캔 없이 안전 검사가 적용된 일회성 DB만 사용합니다. -->
     <bean id="dataSource" class="com.antmillion.stock.support.IsolatedTestDataSource"
           factory-method="create" destroy-method="close"/>
 
-    <!-- JdbcTemplate -->
+    <!-- JDBC 작업 도우미(JdbcTemplate) -->
     <bean id="jdbcTemplate" class="org.springframework.jdbc.core.JdbcTemplate">
         <property name="dataSource" ref="dataSource"/>
     </bean>
@@ -37,7 +37,7 @@
     <!-- Mapper 스캔 -->
     <mybatis-spring:scan base-package="com.antmillion.stock.mapper"/>
 
-    <!-- Transaction Manager -->
+    <!-- 트랜잭션 관리자 -->
     <bean id="transactionManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
         <property name="dataSource" ref="dataSource"/>
     </bean>

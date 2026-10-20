@@ -10,7 +10,7 @@
         <constructor-arg ref="stockSyncMapper"/>
         <constructor-arg ref="stockCache"/>
         <constructor-arg ref="transactionManager"/>
-        <!-- Small synthetic snapshots deliberately remove more than the production limit. -->
+        <!-- 작은 합성 종목 목록에서 실제 환경의 누락 한도를 넘는 제거를 의도적으로 허용합니다. -->
         <constructor-arg value="0"/>
     </bean>
     <bean id="myPageMapper" class="org.mybatis.spring.mapper.MapperFactoryBean">

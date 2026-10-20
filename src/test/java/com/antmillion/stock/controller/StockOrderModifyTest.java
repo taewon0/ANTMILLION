@@ -82,7 +82,7 @@ public class StockOrderModifyTest {
         orderId = order.getOrderId();
         originalOrder = readOrder();
         originalAccounts = jdbc.queryForList("SELECT * FROM account ORDER BY account_id");
-        // No application context/filters: authentication is supplied as an explicit test double.
+        // 애플리케이션 컨텍스트와 필터는 사용하지 않고 인증 정보를 명시적인 테스트 대역으로 제공합니다.
         mvc = MockMvcBuilders.standaloneSetup(
                 new StockOrderController(stockOrderService, accountMapper)).build();
         login(ownerUserId);
@@ -198,7 +198,7 @@ public class StockOrderModifyTest {
         for (String request : bodies) {
             MvcResult result = mvc.perform(post("/api/stock/modify")
                     .contentType(MediaType.APPLICATION_JSON).content(request)).andReturn();
-            // An empty object reaches service validation; unreadable JSON is rejected by Spring MVC.
+            // 빈 객체는 서비스 검증에 전달하고 읽을 수 없는 JSON은 스프링 MVC에서 거부합니다.
             if ("{}".equals(request)) {
                 assertEquals(200, result.getResponse().getStatus());
                 assertFalse(body(result).get("success").asBoolean());

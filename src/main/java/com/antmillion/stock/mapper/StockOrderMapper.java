@@ -25,6 +25,9 @@ public interface StockOrderMapper {
      */
     List<StockOrderResponseDTO> selectWaitOrders(@Param("accountId") Long accountId);
 
+    // 서버 호가 구독을 위해 전체 계좌에서 커밋된 미체결 주문 종목을 조회합니다.
+    List<String> selectPendingQuoteStockCodes();
+
     /**
      * 주문 취소: WAIT(대기) 또는 PARTIAL(부분체결) 상태일 때만 취소 가능
      */

@@ -1,4 +1,4 @@
--- Apply once before enabling daily stock sync. No existing trade data is modified.
+-- 일일 종목 동기화를 활성화하기 전에 한 번 적용합니다. 기존 거래 데이터는 변경하지 않습니다.
 CREATE TABLE stock_sync_run (
     run_date DATE NOT NULL,
     run_id CHAR(36) NOT NULL,

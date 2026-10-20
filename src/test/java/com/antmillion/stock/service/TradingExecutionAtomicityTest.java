@@ -56,7 +56,7 @@ public class TradingExecutionAtomicityTest {
                 TransactionSynchronizationManager.isActualTransactionActive());
         accountId = account(1000000);
         jdbc.update("INSERT INTO stock(stock_code,stock_name) VALUES('ATOM01','합성 체결')");
-        // Direct construction deliberately bypasses test-context's annotation transaction proxy.
+        // 테스트 컨텍스트의 애노테이션 트랜잭션 프록시를 거치지 않도록 직접 생성합니다.
         engine = engine(assetMapper);
     }
 
@@ -179,7 +179,7 @@ public class TradingExecutionAtomicityTest {
         assertEquals(Long.valueOf(997800), balance(accountId));
         assertEquals(Long.valueOf(1001000), balance(seller));
 
-        // A later quote may execute the remaining quantity at a different price.
+        // 이후 호가에서는 남은 수량이 다른 가격으로 체결될 수 있습니다.
         quote(trId, 1200, 1, 900, 2);
         assertEquals("COMPLETED", status(buy));
         assertEquals("COMPLETED", status(sell));
@@ -338,7 +338,7 @@ public class TradingExecutionAtomicityTest {
         ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
         List<org.springframework.messaging.Message<?>> broadcasts = new ArrayList<>();
         channel.subscribe(broadcasts::add);
-        // Only a synthetic text frame and in-memory STOMP channel; no external WS manager is started.
+        // 합성 텍스트 프레임과 메모리 STOMP 채널만 사용하며 외부 웹소켓 관리자는 시작하지 않습니다.
         KisWebSocketHandler handler = new KisWebSocketHandler(null, null,
                 new SimpMessagingTemplate(channel), null, engine);
         handler.handleMessage(null, new TextMessage("0|" + trId + "|001|" + String.join("^", fields)));
@@ -585,7 +585,7 @@ public class TradingExecutionAtomicityTest {
                     }
                     boolean rejected = failingMethod.equals(method.getName());
                     if (rejected && "updateAssetSellWithCostBasis".equals(failingMethod)) {
-                        // Force the real conditional UPDATE to affect zero rows after a valid holding read.
+                        // 정상 보유 조회 후 실제 조건부 갱신의 영향 행 수가 0이 되도록 구성합니다.
                         jdbc.update("UPDATE asset SET quantity=0 WHERE account_id=?", accountId);
                     }
                     Object[] actualArgs = rejected && "addBalance".equals(failingMethod)
@@ -621,7 +621,7 @@ public class TradingExecutionAtomicityTest {
     }
 
     private Long order(Long account, String type, String orderType, int quantity, int price) {
-        // Distinct timestamps make the existing FIFO SQL deterministic for multi-order failures.
+        // 여러 주문의 실패 검증에서 기존 선입선출 SQL의 순서가 일정하도록 생성 시각을 다르게 설정합니다.
         Timestamp created = Timestamp.valueOf(LocalDateTime.of(2026, 1, 1, 0, 0).plusSeconds(++orderSequence));
         jdbc.update("INSERT INTO stock_order(account_id,stock_code,transaction_type,order_type,quantity,order_price,status,created_at,updated_at) "
                 + "VALUES(?,'ATOM01',?,?,?,?,'WAIT',?,?)", account, type, orderType, quantity, price, created, created);

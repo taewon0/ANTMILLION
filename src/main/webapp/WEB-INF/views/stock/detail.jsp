@@ -248,7 +248,7 @@
     <!-- STOMP 라이브러리 -->
     <script
         src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <!-- Adding the standalone version of Lightweight charts -->
+    <!-- Lightweight Charts 독립 실행 버전을 불러옵니다. -->
     <script
         src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <spring:eval expression="@environment.acceptsProfiles('dev-mock')" var="kisMockEnabled" />

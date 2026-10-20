@@ -13,11 +13,13 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Own KIS subscriptions by server STOMP session and subscription ID, never browser supplied owners. */
+/** 브라우저가 지정한 소유자 대신 서버의 STOMP 세션과 구독 ID로 KIS 구독 소유권을 관리합니다. */
 @Slf4j
 @Component
 @Profile("!dev-mock")
@@ -27,6 +29,7 @@ public class KisSubscriptionRegistry {
     private final KisWebSocketManager manager;
     private final Map<String, Map<String, String>> sessions = new HashMap<>();
     private final Map<String, SharedSubscription> subscriptions = new HashMap<>();
+    private final Set<String> orderSubscriptions = new HashSet<>();
 
     @EventListener
     public synchronized void connected(SessionConnectEvent event) {
@@ -52,16 +55,41 @@ public class KisSubscriptionRegistry {
             return;
         }
 
-        SharedSubscription shared = subscriptions.get(destination);
-        if (shared == null) {
-            String trId = "present".equals(topic.group(1))
-                    ? KisWebSocketTrId.getCurrentPresentTrId() : KisWebSocketTrId.getCurrentAskBidTrId();
-            shared = new SharedSubscription(topic.group(2), trId);
-            subscriptions.put(destination, shared);
-        }
+        SharedSubscription shared = shared(destination, topic.group(1), topic.group(2));
         shared.references++;
         owned.put(id, destination);
         acquire(shared);
+    }
+
+    /** 미체결 주문 종목마다 서버 참조 하나를 유지하고 모든 화면의 호가 구독 참조와 공유합니다. */
+    public synchronized void replaceOrderStocks(Set<String> stockCodes) {
+        Set<String> destinations = new HashSet<>();
+        // 기존 참조를 변경하기 전에 조회 결과 전체를 검증합니다.
+        for (String stockCode : stockCodes) {
+            if (stockCode == null || !stockCode.matches("[A-Za-z0-9]{6}")) {
+                throw new IllegalArgumentException("Invalid pending order stock code");
+            }
+            destinations.add("/topic/kis-trade/ask-bid" + stockCode);
+        }
+        for (String destination : destinations) {
+            String stockCode = destination.substring("/topic/kis-trade/ask-bid".length());
+            SharedSubscription shared = shared(destination, "ask-bid", stockCode);
+            if (orderSubscriptions.add(destination)) shared.references++;
+            // 구독 획득에 실패해도 참조를 유지하고 다음 DB 조회 때 다시 시도합니다.
+            acquire(shared);
+        }
+        Set<String> removed = new HashSet<>(orderSubscriptions);
+        removed.removeAll(destinations);
+        for (String destination : removed) {
+            orderSubscriptions.remove(destination);
+            release(destination);
+        }
+    }
+
+    private SharedSubscription shared(String destination, String kind, String stockCode) {
+        return subscriptions.computeIfAbsent(destination, ignored -> new SharedSubscription(stockCode,
+                "present".equals(kind) ? KisWebSocketTrId.getCurrentPresentTrId()
+                        : KisWebSocketTrId.getCurrentAskBidTrId()));
     }
 
     private void acquire(SharedSubscription shared) {
@@ -70,7 +98,7 @@ public class KisSubscriptionRegistry {
             manager.subscribe(shared.stockCode, shared.trId);
             shared.requested = true;
         } catch (RuntimeException e) {
-            // The STOMP subscription still exists. Keep its ownership for a later acquisition retry.
+            // STOMP 구독이 남아 있으므로 다음 획득 재시도를 위해 소유권을 유지합니다.
             log.warn("KIS subscription acquisition failed: {}", e.getClass().getSimpleName());
         }
     }
@@ -95,7 +123,7 @@ public class KisSubscriptionRegistry {
             subscriptions.remove(destination);
             if (!shared.requested) return;
             try {
-                // Use the TR selected on acquisition, including across the market close boundary.
+                // 장 마감 시각이 지나도 구독 획득 당시 선택한 TR로 해제합니다.
                 manager.unsubscribe(shared.stockCode, shared.trId);
             } catch (RuntimeException e) {
                 log.warn("KIS subscription release failed: {}", e.getClass().getSimpleName());

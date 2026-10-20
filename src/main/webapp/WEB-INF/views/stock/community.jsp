@@ -13,7 +13,7 @@
     </div>
 </div>
 
-<!-- jQuery -->
+<!-- 제이쿼리 라이브러리 -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <!-- 커뮤니티 JS -->
 <script src="${cpath}/resources/js/stock/community.js"></script>

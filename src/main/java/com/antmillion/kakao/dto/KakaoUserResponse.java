@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class KakaoUserResponse {
 
-    private Long id; // kakao user id
+    private Long id; // 카카오 사용자 식별자
 
     @JsonProperty("kakao_account")
     private KakaoAccount kakaoAccount;
