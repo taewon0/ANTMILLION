@@ -113,7 +113,7 @@ public class StockPreservationTest {
         assertEquals("재등장", cache.getStockByCode("TEST01").getStockName());
         assertEquals("이름변경", cache.getStockByCode("TEST02").getStockName());
         assertEquals("CANCEL", orderMapper.getOrderByOrderId(partialOrderId).getStatus());
-        assertTrue(orderMapper.findExecutableOrders("TEST01", 1000).isEmpty());
+        assertTrue(orderMapper.findExecutableOrders("TEST01", "BUY", 1000).isEmpty());
     }
 
     @Test
@@ -190,7 +190,7 @@ public class StockPreservationTest {
         request.setOrderId(partialOrderId); request.setQuantity(10); request.setOrderPrice(1200);
         assertFalse(orderService.modifyOrder(accountId, request));
         int tradeCount = jdbc.queryForObject("SELECT COUNT(*) FROM trade_log", Integer.class);
-        engine.processExecution("TEST01", 900, 10);
+        engine.processExecution("TEST01", "BUY", 900, 10);
         assertEquals(Integer.valueOf(tradeCount), jdbc.queryForObject("SELECT COUNT(*) FROM trade_log", Integer.class));
         assertTrue(orderService.cancelOrder(partialOrderId, accountId));
         assertTrue(orderService.createOrder(accountId, "TEST02", "BUY", "LIMIT", 1, 1000));

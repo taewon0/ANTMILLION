@@ -1,5 +1,6 @@
 package com.antmillion.stock.service;
 
+import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.stock.mapper.AssetMapper;
 import com.antmillion.stock.dto.TradeLogDTO;
 import com.antmillion.stock.mapper.RealizedPnlMapper;
@@ -11,17 +12,21 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.support.ExecutorSubscribableChannel;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.socket.TextMessage;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,21 +68,149 @@ public class TradingExecutionAtomicityTest {
     }
 
     @Test
+    public void missingOrUnknownDirectionCannotMutateOrders() {
+        order(accountId, "BUY", 1, 1100);
+        Map<String, List<Map<String, Object>>> before = snapshot();
+        for (String direction : Arrays.asList(null, "", "buy", "ASK")) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> engine.processExecution("ATOM01", direction, 1100, 1));
+            assertEquals(before, snapshot());
+        }
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
+    @Test
+    public void askLiquidityDoesNotFillEarlierSellOrder() throws Exception {
+        Long seller = seller(2);
+        Long sell = order(seller, "SELL", 2, 1000);
+        Long buy = order(accountId, "BUY", 2, 1100);
+
+        quote("H0STASP0", 1100, 2, 1000, 0);
+
+        assertEquals("WAIT", status(sell));
+        assertEquals("COMPLETED", status(buy));
+        assertTrade(buy, 1100, 2);
+        assertEquals(Long.valueOf(1000000), balance(seller));
+        assertEquals(Integer.valueOf(2), assetMapper.getQuantityByAccountAndStock(seller, "ATOM01"));
+    }
+
+    @Test
+    public void bidLiquidityDoesNotFillEarlierBuyOrder() throws Exception {
+        Long buy = order(accountId, "BUY", 2, 1100);
+        Long seller = seller(2);
+        Long sell = order(seller, "SELL", 2, 1000);
+
+        quote("H0STASP0", 1100, 0, 1000, 2);
+
+        assertEquals("WAIT", status(buy));
+        assertEquals("COMPLETED", status(sell));
+        assertTrade(sell, 1000, 2);
+        assertEquals(Long.valueOf(1000000), balance(accountId));
+        assertNull(assetMapper.getAssetForSell(accountId, "ATOM01"));
+    }
+
+    @Test
+    public void krxQuoteUsesSeparatePricesQuantitiesAndFifoForEachDirection() throws Exception {
+        assertQuoteDirections("H0STASP0");
+    }
+
+    @Test
+    public void unifiedQuoteUsesSeparatePricesQuantitiesAndFifoForEachDirection() throws Exception {
+        assertQuoteDirections("H0UNASP0");
+    }
+
+    private void assertQuoteDirections(String trId) throws Exception {
+        Long seller = seller(5);
+        Long firstSell = order(seller, "SELL", 2, 1000);
+        Long firstBuy = order(accountId, "BUY", 3, 1100);
+        Long secondSell = order(seller, "SELL", 3, 1000);
+        Long secondBuy = order(accountId, "BUY", 2, 1100);
+        Long belowAskBuy = order(accountId, "BUY", 1, 1099);
+        Long aboveBidSell = order(seller, "SELL", 1, 1001);
+
+        quote(trId, 1100, 4, 1000, 1);
+        assertEquals("COMPLETED", status(firstBuy));
+        assertEquals("PARTIAL", status(secondBuy));
+        assertEquals("PARTIAL", status(firstSell));
+        assertEquals("WAIT", status(secondSell));
+        assertTrade(firstBuy, 1100, 3);
+        assertTrade(secondBuy, 1100, 1);
+        assertTrade(firstSell, 1000, 1);
+
+        quote(trId, 1100, 1, 1000, 4);
+        for (Long id : Arrays.asList(firstBuy, secondBuy, firstSell, secondSell)) {
+            assertEquals("COMPLETED", status(id));
+        }
+        assertEquals("WAIT", status(belowAskBuy));
+        assertEquals("WAIT", status(aboveBidSell));
+        assertTrade(firstBuy, 1100, 3);
+        assertTrade(secondBuy, 1100, 2);
+        assertTrade(firstSell, 1000, 2);
+        assertTrade(secondSell, 1000, 3);
+        assertEquals(Long.valueOf(994500), balance(accountId));
+        assertEquals(Long.valueOf(1005000), balance(seller));
+        assertEquals(Integer.valueOf(5), assetMapper.getQuantityByAccountAndStock(accountId, "ATOM01"));
+        assertNull(assetMapper.getAssetForSell(seller, "ATOM01"));
+        assertEquals(Long.valueOf(5000), jdbc.queryForObject(
+                "SELECT SUM(sell_amount) FROM realized_pnl WHERE account_id=?", Long.class, seller));
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    }
+
+    private Long seller(int quantity) {
+        Long seller = account(1000000);
+        jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) "
+                + "VALUES(?,'ATOM01',?,?,900)", seller, quantity, quantity * 900);
+        return seller;
+    }
+
+    private void assertTrade(Long order, int price, int quantity) {
+        Map<String, Object> trade = jdbc.queryForMap(
+                "SELECT MIN(trade_price) AS min_price,MAX(trade_price) AS max_price,SUM(trade_quantity) AS qty "
+                + "FROM trade_log WHERE order_id=?", order);
+        assertEquals(price, ((Number) trade.get("min_price")).intValue());
+        assertEquals(price, ((Number) trade.get("max_price")).intValue());
+        assertEquals(quantity, ((Number) trade.get("qty")).intValue());
+    }
+
+    private void quote(String trId, int askPrice, int askQty, int bidPrice, int bidQty) throws Exception {
+        String[] fields = new String[38];
+        Arrays.fill(fields, "0");
+        fields[0] = "ATOM01";
+        fields[3] = String.valueOf(askPrice);
+        fields[13] = String.valueOf(bidPrice);
+        fields[23] = String.valueOf(askQty);
+        fields[33] = String.valueOf(bidQty);
+        ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
+        List<org.springframework.messaging.Message<?>> broadcasts = new ArrayList<>();
+        channel.subscribe(broadcasts::add);
+        // Only a synthetic text frame and in-memory STOMP channel; no external WS manager is started.
+        KisWebSocketHandler handler = new KisWebSocketHandler(null, null,
+                new SimpMessagingTemplate(channel), null, engine);
+        handler.handleMessage(null, new TextMessage("0|" + trId + "|001|" + String.join("^", fields)));
+        assertEquals(1, broadcasts.size());
+        Map<?, ?> payload = (Map<?, ?>) broadcasts.get(0).getPayload();
+        assertEquals("ATOM01", payload.get("mkscShrnIscd"));
+        assertEquals(String.valueOf(askPrice), payload.get("askP1"));
+        assertEquals(String.valueOf(bidPrice), payload.get("bidP1"));
+        assertEquals("/topic/kis-trade/ask-bidATOM01", broadcasts.get(0).getHeaders().get("simpDestination"));
+    }
+
+    @Test
     public void partialAndFullExecutionsLinkEachSellToItsGeneratedTradeAndAccount() {
         Long buy = order(accountId, "BUY", 5, 1000);
-        engine.processExecution("ATOM01", 1000, 3);
+        engine.processExecution("ATOM01", "BUY", 1000, 3);
         assertEquals("PARTIAL", status(buy));
-        engine.processExecution("ATOM01", 1000, 2);
+        engine.processExecution("ATOM01", "BUY", 1000, 2);
         assertEquals("COMPLETED", status(buy));
 
         Long secondAccount = account(2000);
         jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) VALUES(?,'ATOM01',2,1000,500)", secondAccount);
         Long firstSell = order(accountId, "SELL", 5, 1200);
         Long secondSell = order(secondAccount, "SELL", 2, 1200);
-        engine.processExecution("ATOM01", 1200, 2);
+        engine.processExecution("ATOM01", "SELL", 1200, 2);
         assertEquals("PARTIAL", status(firstSell));
         assertEquals(Long.valueOf(997400), balance(accountId));
-        engine.processExecution("ATOM01", 1200, 5);
+        engine.processExecution("ATOM01", "SELL", 1200, 5);
 
         assertEquals("COMPLETED", status(firstSell));
         assertEquals("COMPLETED", status(secondSell));
@@ -110,7 +243,7 @@ public class TradingExecutionAtomicityTest {
         jdbc.update("UPDATE account SET balance=500 WHERE account_id=?", accountId);
         order(accountId, "BUY", 1, 1000);
         Map<String, List<Map<String, Object>>> before = snapshot();
-        assertThrows(RuntimeException.class, () -> engine.processExecution("ATOM01", 1000, 1));
+        assertThrows(RuntimeException.class, () -> engine.processExecution("ATOM01", "BUY", 1000, 1));
         assertEquals(before, snapshot());
     }
 
@@ -167,13 +300,13 @@ public class TradingExecutionAtomicityTest {
     public void partialSellRoundsDownCostAndFullSellConsumesRemainingCost() {
         holding(3, 1000);
         Long sell = order(accountId, "SELL", 3, 1200);
-        engine.processExecution("ATOM01", 1200, 1);
+        engine.processExecution("ATOM01", "SELL", 1200, 1);
         assertEquals("PARTIAL", status(sell));
         assertEquals(Long.valueOf(1001200), balance(accountId));
         assertEquals(Integer.valueOf(2), assetMapper.getQuantityByAccountAndStock(accountId, "ATOM01"));
         assertEquals(Long.valueOf(667), assetMapper.getAssetForSell(accountId, "ATOM01").getPurchaseAmount());
 
-        engine.processExecution("ATOM01", 1200, 2);
+        engine.processExecution("ATOM01", "SELL", 1200, 2);
         assertEquals("COMPLETED", status(sell));
         assertEquals(Long.valueOf(1003600), balance(accountId));
         assertNull(assetMapper.getAssetForSell(accountId, "ATOM01"));
@@ -197,14 +330,14 @@ public class TradingExecutionAtomicityTest {
     @Test
     public void failureAfterBuyAssetWriteRollsBackTradeOrderBalanceAndAsset() {
         order(accountId, "BUY", 3, 1000);
-        assertLateFailureRollsBack("upsertAssetBuy", 1000, 3);
+        assertLateFailureRollsBack("upsertAssetBuy", "BUY", 1000, 3);
     }
 
     @Test
     public void failureAfterSellBalanceWriteRollsBackPnlTradeOrderAssetAndBalance() {
         jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) VALUES(?,'ATOM01',4,4000,1000)", accountId);
         order(accountId, "SELL", 2, 1200);
-        assertLateFailureRollsBack("addBalance", 1200, 2);
+        assertLateFailureRollsBack("addBalance", "SELL", 1200, 2);
     }
 
     @Test
@@ -213,7 +346,7 @@ public class TradingExecutionAtomicityTest {
         Long secondAccount = account(500);
         Long second = order(secondAccount, "BUY", 1, 1000);
         Map<String, List<Map<String, Object>>> before = snapshot();
-        assertThrows(RuntimeException.class, () -> engine.processExecution("ATOM01", 1000, 2));
+        assertThrows(RuntimeException.class, () -> engine.processExecution("ATOM01", "BUY", 1000, 2));
         assertEquals(before, snapshot());
         assertEquals("WAIT", status(first));
         assertEquals("WAIT", status(second));
@@ -226,7 +359,7 @@ public class TradingExecutionAtomicityTest {
         RuntimeException failure = new IllegalStateException("synthetic caller failure");
         assertSame(failure, assertThrows(RuntimeException.class, () ->
                 new TransactionTemplate(transactionManager).execute(status -> {
-                    engine.processExecution("ATOM01", 1000, 1);
+                    engine.processExecution("ATOM01", "BUY", 1000, 1);
                     assertNotEquals(before, snapshot());
                     throw failure;
                 })));
@@ -248,11 +381,11 @@ public class TradingExecutionAtomicityTest {
                     }
                 });
         TradingEngineService missingKeyEngine = new TradingEngineService(orderMapper, missingKey, assetMapper, pnlMapper, transactionManager);
-        assertThrows(IllegalStateException.class, () -> missingKeyEngine.processExecution("ATOM01", 1000, 1));
+        assertThrows(IllegalStateException.class, () -> missingKeyEngine.processExecution("ATOM01", "BUY", 1000, 1));
         assertEquals(before, snapshot());
     }
 
-    private void assertLateFailureRollsBack(String methodName, int price, int quantity) {
+    private void assertLateFailureRollsBack(String methodName, String transactionType, int price, int quantity) {
         Map<String, List<Map<String, Object>>> before = snapshot();
         RuntimeException failure = new IllegalStateException("synthetic late write failure");
         AssetMapper failing = (AssetMapper) Proxy.newProxyInstance(AssetMapper.class.getClassLoader(),
@@ -270,7 +403,7 @@ public class TradingExecutionAtomicityTest {
                     return result;
                 });
         assertSame(failure, assertThrows(RuntimeException.class,
-                () -> engine(failing).processExecution("ATOM01", price, quantity)));
+                () -> engine(failing).processExecution("ATOM01", transactionType, price, quantity)));
         assertEquals(before, snapshot());
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     }
@@ -282,7 +415,7 @@ public class TradingExecutionAtomicityTest {
 
     private void assertSellFailureRollsBack(TradingEngineService service, int quantity) {
         Map<String, List<Map<String, Object>>> before = snapshot();
-        assertThrows(IllegalStateException.class, () -> service.processExecution("ATOM01", 1200, quantity));
+        assertThrows(IllegalStateException.class, () -> service.processExecution("ATOM01", "SELL", 1200, quantity));
         assertEquals(before, snapshot());
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     }

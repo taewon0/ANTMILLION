@@ -37,14 +37,17 @@ public class TradingEngineService {
         this.transaction = new TransactionTemplate(transactionManager);
     }
 
-    public void processExecution(String stockCode, int currentPrice, int availableQty) {
+    public void processExecution(String stockCode, String transactionType, int currentPrice, int availableQty) {
+        if (!"BUY".equals(transactionType) && !"SELL".equals(transactionType)) {
+            throw new IllegalArgumentException("체결 주문 방향은 BUY 또는 SELL이어야 합니다.");
+        }
         // 기존 메서드 경계를 유지하며, annotation 활성화 여부와 무관하게 한 호출 전체를 롤백합니다.
-        transaction.executeWithoutResult(status -> executeOrders(stockCode, currentPrice, availableQty));
+        transaction.executeWithoutResult(status -> executeOrders(stockCode, transactionType, currentPrice, availableQty));
     }
 
-    private void executeOrders(String stockCode, int currentPrice, int availableQty) {
+    private void executeOrders(String stockCode, String transactionType, int currentPrice, int availableQty) {
         // 체결 가능한 주문 리스트 
-        List<StockOrderResponseDTO> orders = stockOrderMapper.findExecutableOrders(stockCode, currentPrice);
+        List<StockOrderResponseDTO> orders = stockOrderMapper.findExecutableOrders(stockCode, transactionType, currentPrice);
         
         int remainingMarketQty = availableQty; // 시장 호가 잔량
 

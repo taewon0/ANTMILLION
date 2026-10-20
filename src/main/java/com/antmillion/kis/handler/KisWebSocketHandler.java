@@ -144,9 +144,9 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 				int bestAskPrice = parseSafeInt(data[3]); // 매도 1호가
 				int bestAskQty = parseSafeInt(data[23]); // 매도 1호가 잔량
 				// 매수 주문 체결 확인 (최우선 매도호가에 내 매수 주문이 닿았는가)
-				tradingEngineService.processExecution(stockCode, bestAskPrice, bestAskQty);
+				tradingEngineService.processExecution(stockCode, "BUY", bestAskPrice, bestAskQty);
 				// 매도 주문 체결 확인 (최우선 매수호가에 내 매도 주문이 닿았는가)
-				tradingEngineService.processExecution(stockCode, bestBidPrice, bestBidQty);
+				tradingEngineService.processExecution(stockCode, "SELL", bestBidPrice, bestBidQty);
 			} else {
 				log.info("### [알림] 현재가/호가 데이터 아님 ###");
 			}

@@ -79,6 +79,7 @@
         WHERE o.stock_code = #{stockCode} 
           AND s.active = 1
           AND o.status IN ('WAIT', 'PARTIAL')
+          AND o.transaction_type = #{transactionType}
           AND (
                (o.transaction_type = 'BUY' AND o.order_price &gt;= #{currentPrice})
                OR 

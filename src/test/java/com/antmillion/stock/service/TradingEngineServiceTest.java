@@ -103,7 +103,7 @@ public class TradingEngineServiceTest {
         );
         System.out.println("매수 주문 ID: " + buyOrderId);
 
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 10);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 10);
 
         // 매수 체결 후 확인
         int tradeLogCount = jdbcTemplate.queryForObject(
@@ -130,7 +130,7 @@ public class TradingEngineServiceTest {
         );
         System.out.println("매도 주문 ID: " + sellOrderId);
 
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 12000, 5);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 12000, 5);
 
         // 매도 체결 후 확인
         int sellTradeLogCount = jdbcTemplate.queryForObject(
@@ -192,11 +192,11 @@ public class TradingEngineServiceTest {
 
         // 1. 매수: 10주 * 10,000원
         insertBuyOrder(10, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 10);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 10);
 
         // 2. 매도: 5주 * 12,000원
         insertSellOrder(5, 12000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 12000, 5);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 12000, 5);
 
         // 3. 실현손익 검증
         Map<String, Object> pnl = jdbcTemplate.queryForMap(
@@ -239,15 +239,15 @@ public class TradingEngineServiceTest {
 
         // 1. 1차 매수: 3주 * 10,000원
         insertBuyOrder(3, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 3);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 3);
 
         // 2. 2차 매수: 2주 * 10,001원
         insertBuyOrder(2, 10001);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10001, 2);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10001, 2);
 
         // 3. 매도: 2주 * 11,000원
         insertSellOrder(2, 11000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 11000, 2);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 11000, 2);
 
         // 4. 실현손익 검증
         Map<String, Object> pnl = jdbcTemplate.queryForMap(
@@ -292,19 +292,19 @@ public class TradingEngineServiceTest {
 
         // 1. 1차 매수: 3주 * 10,000원
         insertBuyOrder(3, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 3);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 3);
 
         // 2. 2차 매수: 2주 * 10,001원
         insertBuyOrder(2, 10001);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10001, 2);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10001, 2);
 
         // 3. 1차 매도: 2주 * 11,000원
         insertSellOrder(2, 11000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 11000, 2);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 11000, 2);
 
         // 4. 2차 매도: 3주 * 9,000원 (전량매도)
         insertSellOrder(3, 9000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 9000, 3);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 9000, 3);
 
         // 5. 실현손익 검증 (2건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
@@ -359,19 +359,19 @@ public class TradingEngineServiceTest {
 
         // 1. 매수: 3주 * 10,000원
         insertBuyOrder(3, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 3);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 3);
 
         // 2. 1차 매도: 1주 * 11,000원
         insertSellOrder(1, 11000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 11000, 1);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 11000, 1);
 
         // 3. 2차 매도: 1주 * 11,000원
         insertSellOrder(1, 11000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 11000, 1);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 11000, 1);
 
         // 4. 3차 매도: 1주 * 9,000원
         insertSellOrder(1, 9000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 9000, 1);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 9000, 1);
 
         // 5. 실현손익 검증 (3건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
@@ -420,15 +420,15 @@ public class TradingEngineServiceTest {
 
         // 1. 매수: 10주 * 10,000원
         insertBuyOrder(10, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 10);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "BUY", 10000, 10);
 
         // 2. 1차 매도: 5주 * 10,000원 (손익분기)
         insertSellOrder(5, 10000);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10000, 5);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 10000, 5);
 
         // 3. 2차 매도: 5주 * 10,500원 (이익)
         insertSellOrder(5, 10500);
-        tradingEngineService.processExecution(TEST_STOCK_CODE, 10500, 5);
+        tradingEngineService.processExecution(TEST_STOCK_CODE, "SELL", 10500, 5);
 
         // 4. 실현손익 검증 (2건)
         List<Map<String, Object>> pnlList = jdbcTemplate.queryForList(
