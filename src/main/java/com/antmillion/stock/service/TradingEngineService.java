@@ -41,6 +41,10 @@ public class TradingEngineService {
         if (!"BUY".equals(transactionType) && !"SELL".equals(transactionType)) {
             throw new IllegalArgumentException("체결 주문 방향은 BUY 또는 SELL이어야 합니다.");
         }
+        // 비어 있거나 유효하지 않은 호가는 해당 방향만 건너뛰고 다음 호가를 기다립니다.
+        if (currentPrice <= 0 || availableQty <= 0) {
+            return;
+        }
         // 기존 메서드 경계를 유지하며, annotation 활성화 여부와 무관하게 한 호출 전체를 롤백합니다.
         transaction.executeWithoutResult(status -> executeOrders(stockCode, transactionType, currentPrice, availableQty));
     }
