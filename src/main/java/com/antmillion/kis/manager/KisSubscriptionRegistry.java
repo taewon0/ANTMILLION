@@ -13,7 +13,9 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +29,7 @@ public class KisSubscriptionRegistry {
     private final KisWebSocketManager manager;
     private final Map<String, Map<String, String>> sessions = new HashMap<>();
     private final Map<String, SharedSubscription> subscriptions = new HashMap<>();
+    private final Set<String> orderSubscriptions = new HashSet<>();
 
     @EventListener
     public synchronized void connected(SessionConnectEvent event) {
@@ -52,16 +55,41 @@ public class KisSubscriptionRegistry {
             return;
         }
 
-        SharedSubscription shared = subscriptions.get(destination);
-        if (shared == null) {
-            String trId = "present".equals(topic.group(1))
-                    ? KisWebSocketTrId.getCurrentPresentTrId() : KisWebSocketTrId.getCurrentAskBidTrId();
-            shared = new SharedSubscription(topic.group(2), trId);
-            subscriptions.put(destination, shared);
-        }
+        SharedSubscription shared = shared(destination, topic.group(1), topic.group(2));
         shared.references++;
         owned.put(id, destination);
         acquire(shared);
+    }
+
+    /** One server reference per pending stock, shared with all browser ask/bid references. */
+    public synchronized void replaceOrderStocks(Set<String> stockCodes) {
+        Set<String> destinations = new HashSet<>();
+        // Validate the entire snapshot before changing any existing references.
+        for (String stockCode : stockCodes) {
+            if (stockCode == null || !stockCode.matches("[A-Za-z0-9]{6}")) {
+                throw new IllegalArgumentException("Invalid pending order stock code");
+            }
+            destinations.add("/topic/kis-trade/ask-bid" + stockCode);
+        }
+        for (String destination : destinations) {
+            String stockCode = destination.substring("/topic/kis-trade/ask-bid".length());
+            SharedSubscription shared = shared(destination, "ask-bid", stockCode);
+            if (orderSubscriptions.add(destination)) shared.references++;
+            // A failed acquisition keeps its reference and is retried on the next DB snapshot.
+            acquire(shared);
+        }
+        Set<String> removed = new HashSet<>(orderSubscriptions);
+        removed.removeAll(destinations);
+        for (String destination : removed) {
+            orderSubscriptions.remove(destination);
+            release(destination);
+        }
+    }
+
+    private SharedSubscription shared(String destination, String kind, String stockCode) {
+        return subscriptions.computeIfAbsent(destination, ignored -> new SharedSubscription(stockCode,
+                "present".equals(kind) ? KisWebSocketTrId.getCurrentPresentTrId()
+                        : KisWebSocketTrId.getCurrentAskBidTrId()));
     }
 
     private void acquire(SharedSubscription shared) {

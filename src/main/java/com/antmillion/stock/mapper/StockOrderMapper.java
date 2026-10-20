@@ -25,6 +25,9 @@ public interface StockOrderMapper {
      */
     List<StockOrderResponseDTO> selectWaitOrders(@Param("accountId") Long accountId);
 
+    // Server quote subscriptions need committed pending stocks across all accounts.
+    List<String> selectPendingQuoteStockCodes();
+
     /**
      * 주문 취소: WAIT(대기) 또는 PARTIAL(부분체결) 상태일 때만 취소 가능
      */

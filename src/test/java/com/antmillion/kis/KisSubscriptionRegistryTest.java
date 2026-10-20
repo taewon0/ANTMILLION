@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -269,6 +270,74 @@ public class KisSubscriptionRegistryTest {
             assertEquals(1, wire.provider.acquired.size());
             assertTrue(wire.provider.released.isEmpty());
             wire.disconnect(a);
+            assertEquals(wire.provider.acquired, wire.provider.released);
+        }
+    }
+
+    @Test
+    public void pendingOrderKeepsQuotesAfterLastBrowserDisconnects() throws Exception {
+        try (Wire wire = new Wire()) {
+            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            WebSocketSession browser = wire.connect("browser");
+            wire.subscribe(browser, "book", "ask-bid005930");
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.replaceOrderStocks(Set.of("005930"));
+            wire.disconnect(browser);
+            assertEquals(1, wire.provider.acquired.size());
+            assertTrue(wire.provider.released.isEmpty());
+            registry.replaceOrderStocks(Set.of());
+            registry.replaceOrderStocks(Set.of());
+            assertEquals(wire.provider.acquired, wire.provider.released);
+        }
+    }
+
+    @Test
+    public void completingLastOrderPreservesBrowserAndOtherStocks() throws Exception {
+        try (Wire wire = new Wire()) {
+            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            registry.replaceOrderStocks(Set.of("005930", "000660"));
+            WebSocketSession browser = wire.connect("browser");
+            wire.subscribe(browser, "book", "ask-bid005930");
+            wire.subscribe(browser, "price", "present005930");
+            registry.replaceOrderStocks(Set.of("000660"));
+            assertEquals(3, wire.provider.acquired.size());
+            assertTrue(wire.provider.released.isEmpty());
+            wire.disconnect(browser);
+            assertEquals(2, wire.provider.released.size());
+            registry.replaceOrderStocks(Set.of());
+            assertEquals(3, wire.provider.released.size());
+            assertTrue(wire.provider.released.containsAll(wire.provider.acquired));
+        }
+    }
+
+    @Test
+    public void repeatedSnapshotsRetryFailedOrderAcquisitionWithoutLeakingReferences() {
+        try (Wire wire = new Wire()) {
+            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            wire.provider.failSubscribe = true;
+            registry.replaceOrderStocks(Set.of("005930"));
+            wire.provider.failSubscribe = false;
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.replaceOrderStocks(Set.of("005930"));
+            assertEquals(1, wire.provider.acquired.size());
+            wire.provider.failUnsubscribe = true;
+            registry.replaceOrderStocks(Set.of());
+            wire.provider.failUnsubscribe = false;
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.replaceOrderStocks(Set.of());
+            assertEquals(2, wire.provider.acquired.size());
+            assertEquals(2, wire.provider.released.size());
+        }
+    }
+
+    @Test
+    public void invalidSnapshotCannotDropExistingOrderReferences() {
+        try (Wire wire = new Wire()) {
+            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            registry.replaceOrderStocks(Set.of("005930"));
+            assertThrows(IllegalArgumentException.class, () -> registry.replaceOrderStocks(Set.of("bad")));
+            assertTrue(wire.provider.released.isEmpty());
+            registry.replaceOrderStocks(Set.of());
             assertEquals(wire.provider.acquired, wire.provider.released);
         }
     }

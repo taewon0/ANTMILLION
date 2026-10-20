@@ -44,6 +44,17 @@
         ORDER BY o.created_at DESC
     </select>
 
+    <select id="selectPendingQuoteStockCodes" resultType="java.lang.String" useCache="false" flushCache="true">
+        SELECT DISTINCT o.stock_code
+        FROM stock_order o
+        JOIN stock s ON s.stock_code = o.stock_code AND s.active = 1
+        WHERE o.status IN ('WAIT', 'PARTIAL')
+          AND o.quantity &gt; COALESCE((
+              SELECT SUM(t.trade_quantity) FROM trade_log t WHERE t.order_id = o.order_id
+          ), 0)
+        ORDER BY o.stock_code
+    </select>
+
     <update id="cancelOrder">
         UPDATE stock_order 
         SET status = 'CANCEL', 
