@@ -1,8 +1,9 @@
 package com.antmillion.stock.controller;
 
 import com.antmillion.auth.mapper.AccountMapper;
-import com.antmillion.kis.dto.CurrentPrice;
-import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.dto.CurrentQuote;
+import com.antmillion.marketdata.provider.CurrentPriceProvider;
+import com.antmillion.stock.dto.InterestPriceResponseDTO;
 import com.antmillion.stock.dto.StockDTO;
 import com.antmillion.stock.service.InterestService;
 import com.antmillion.stock.service.StockService;
@@ -25,7 +26,7 @@ import java.util.Map;
 public class InterestController {
 
     private final InterestService interestService;
-    private final KisApiService kisApiService;
+    private final CurrentPriceProvider currentPriceProvider;
     private final StockService stockService;
     private final AccountMapper accountMapper;
 
@@ -127,19 +128,19 @@ public class InterestController {
         List<String> pagedStockCodes = allStockCodes.subList(startIndex, endIndex);
 
         // 4. 페이징된 종목들만 API 조회
-        List<CurrentPrice> prices = kisApiService.getCurrentPricesDetail(pagedStockCodes);
+        List<CurrentQuote> prices = currentPriceProvider.getCurrentPrices(pagedStockCodes);
 
         // 일부 가격 조회가 실패해도 다른 종목의 코드·이름을 덮어쓰지 않습니다.
-        Map<String, CurrentPrice> pricesByCode = new HashMap<>();
-        for (CurrentPrice price : prices) {
+        Map<String, CurrentQuote> pricesByCode = new HashMap<>();
+        for (CurrentQuote price : prices) {
             pricesByCode.put(price.getStockCode(), price);
         }
-        List<CurrentPrice> pagedPrices = new ArrayList<>();
+        List<InterestPriceResponseDTO> pagedPrices = new ArrayList<>();
         for (String stockCode : pagedStockCodes) {
-            CurrentPrice price = pricesByCode.get(stockCode);
+            CurrentQuote price = pricesByCode.get(stockCode);
             if (price != null) {
-                price.setStockName(activeStocks.get(stockCode).getStockName());
-                pagedPrices.add(price);
+                pagedPrices.add(new InterestPriceResponseDTO(stockCode,
+                        activeStocks.get(stockCode).getStockName(), price.getCurrentPrice(), price.getChangeRate()));
             }
         }
 

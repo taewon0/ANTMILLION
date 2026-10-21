@@ -1,7 +1,7 @@
 package com.antmillion.stock.service;
 
-import com.antmillion.kis.dto.CurrentPriceRequest;
-import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.dto.CurrentQuote;
+import com.antmillion.marketdata.provider.CurrentPriceProvider;
 import com.antmillion.mypage.dto.StockHoldingsDTO;
 import com.antmillion.mypage.mapper.MyPageMapper;
 import com.antmillion.mypage.service.MyPageServiceImpl;
@@ -200,10 +200,11 @@ public class StockPreservationTest {
     public void inactiveHoldingsStayVisibleWithoutExternalPriceOrZeroValuation() {
         deactivate();
         int[] calls = {0};
-        KisApiService prices = new KisApiService(null, null, null, null, null, null, null, null, null, null) {
-            @Override public Integer getCurrentPrice(CurrentPriceRequest request) {
+        CurrentPriceProvider prices = new CurrentPriceProvider() {
+            @Override public Integer getCurrentPrice(String code) {
                 calls[0]++; throw new AssertionError("inactive stock must not request a price");
             }
+            @Override public List<CurrentQuote> getCurrentPrices(List<String> codes) { throw new AssertionError(); }
         };
         List<StockHoldingsDTO> holdings = new MyPageServiceImpl(myPageMapper, prices).getStockHoldings(accountId);
         assertEquals(1, holdings.size());
@@ -220,12 +221,13 @@ public class StockPreservationTest {
 
     @Test
     public void activeQuotesKeepNormalValuesAndMissingQuotesStayUnknown() {
-        for (Integer quote : Arrays.asList(null, 0, 1200)) {
-            KisApiService prices = new KisApiService(null, null, null, null, null, null, null, null, null, null) {
-                @Override public Integer getCurrentPrice(CurrentPriceRequest request) { return quote; }
+        for (Integer quote : Arrays.asList(null, 0, -1, 1200)) {
+            CurrentPriceProvider prices = new CurrentPriceProvider() {
+                @Override public Integer getCurrentPrice(String code) { return quote; }
+                @Override public List<CurrentQuote> getCurrentPrices(List<String> codes) { throw new AssertionError(); }
             };
             StockHoldingsDTO holding = new MyPageServiceImpl(myPageMapper, prices).getStockHoldings(accountId).get(0);
-            if (quote == null || quote == 0) {
+            if (quote == null || quote <= 0) {
                 assertNull(holding.getCurrentPrice());
                 assertNull(holding.getTotalValue());
                 assertNull(holding.getProfitRate());

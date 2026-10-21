@@ -4,8 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.antmillion.kis.dto.CurrentPriceRequest;
-import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.provider.CurrentPriceProvider;
 import org.springframework.stereotype.Service;
 
 import com.antmillion.mypage.dto.AccountInfoDTO;
@@ -20,7 +19,7 @@ import lombok.RequiredArgsConstructor;
 public class MyPageServiceImpl implements MyPageService {
 
     private final MyPageMapper myPageMapper;
-    private final KisApiService kisApiService;
+    private final CurrentPriceProvider currentPriceProvider;
     
     //1. 주식잔고
     @Override
@@ -33,12 +32,7 @@ public class MyPageServiceImpl implements MyPageService {
             if (!stock.isActive()) {
                 continue;
             }
-            CurrentPriceRequest request = CurrentPriceRequest.builder()
-                    .marketCode("J")
-                    .stockCode(stock.getCode())
-                    .build();
-            
-            Integer quote = kisApiService.getCurrentPrice(request);
+            Integer quote = currentPriceProvider.getCurrentPrice(stock.getCode());
             if (quote == null || quote <= 0) {
                 continue;
             }
