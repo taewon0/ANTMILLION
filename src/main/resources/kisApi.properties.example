@@ -4,3 +4,6 @@ kis.app-secret=USERSECRETKEY
 kis.account-no=00000000
 kis.acnt-prdt-cd=0000000000
 kis.mode=real
+
+# 현재 연결의 무수신 제한(ms)입니다. ACK 제한 5000ms보다 크게 설정합니다.
+kis.websocket.receive-timeout-millis=90000

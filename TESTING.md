@@ -112,6 +112,16 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisWebSocketRecoveryTest' 
 주문 전용 호가 참조 복원→부분/전량 체결을 실제 격리 DB로 검증하는 회귀도 포함됩니다.
 실제 증권사 응답·한도·Tomcat/브라우저 동작은 별도 검증이 필요합니다.
 
+열린 KIS 연결에서 90초 동안 메시지를 수신하지 못하면 기존 backoff로 연결을 교체하고
+남은 활성 참조를 복원합니다. PINGPONG·시세·Pong 수신은 제한 시간을 갱신하며,
+송신 성공만으로는 갱신하지 않습니다. 시세가 없어도 heartbeat가 오면 연결을 유지합니다.
+`kisApi.properties` 또는 JVM `-Dkis.websocket.receive-timeout-millis=180000`으로
+임계값(ms)을 조절할 수 있으며, ACK 제한인 5000ms보다 커야 합니다.
+90초는 애플리케이션 기본 정책이며 KIS의 heartbeat 보장 주기가 아닙니다.
+연결 전체의 무수신만 감지하므로 개별 종목의 시세 신선도는 별도 검증 대상입니다.
+위 단위 테스트는 합성 시각으로 경계·정상 수신·이전 연결·보류/종료 회귀를 확인하고,
+`Test-Trading.ps1`은 무응답 복원 후 주문 전용 호가의 부분/전량 체결도 검증합니다.
+
 주문 가격 입력은 아래 명령으로 검증합니다.
 
 ```powershell

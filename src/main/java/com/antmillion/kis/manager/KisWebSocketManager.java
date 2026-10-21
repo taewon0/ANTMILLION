@@ -57,6 +57,8 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private long activeAttempt;
     private long retryAt;
     private long retryDelay = 1000;
+    private long lastReceivedAt;
+    private long receiveTimeoutMillis = 90000;
 
     public KisWebSocketManager(KisApiService kisApiService, SimpMessagingTemplate messagingTemplate,
             TradingEngineService tradingEngineService) {
@@ -72,6 +74,12 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     public void start() {
         synchronized (state) {
             if (running || (environment != null && environment.acceptsProfiles(Profiles.of("dev-mock")))) return;
+            long timeout = environment == null ? 90000
+                    : environment.getProperty("kis.websocket.receive-timeout-millis", Long.class, 90000L);
+            if (timeout <= acknowledgementTimeoutMillis()) {
+                throw new IllegalArgumentException("KIS receive timeout must exceed the ACK timeout");
+            }
+            receiveTimeoutMillis = timeout;
             scheduler = createScheduler();
             scheduler.setPoolSize(1);
             scheduler.setThreadNamePrefix("kis-recovery-");
@@ -155,6 +163,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             if (current == null) current = connect(startedGeneration);
             if (current == null) return;
             if (expireAcknowledgements(current, startedGeneration)) return;
+            if (expireReceive(current, startedGeneration)) return;
             // 연결 대기 중 바뀐 참조를 다시 읽어 이전 스냅샷을 재전송하지 않습니다.
             Map<String, Subscription> additions;
             Map<String, Subscription> removals;
@@ -285,6 +294,21 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
         close(current);
     }
 
+    /** 시세가 없어도 PINGPONG 등 수신이 계속되면 연결을 유지합니다. 송신은 수신 시각을 갱신하지 않습니다. */
+    private boolean expireReceive(WebSocketSession current, long startedGeneration) {
+        synchronized (state) {
+            if (!running || generation != startedGeneration || session != current) return true;
+            if (!hasLiveSubscriptions() || nowMillis() - lastReceivedAt < receiveTimeoutMillis) return false;
+            // 만료 확인과 연결 폐기를 함께 처리하여 늦은 메시지가 새 연결의 시각을 바꾸지 못하게 합니다.
+            session = null;
+            clearConnectionState();
+            delayRetry();
+        }
+        close(current);
+        log.warn("KIS WebSocket receive timeout; reconnect scheduled");
+        return true;
+    }
+
     private WebSocketSession connect(long startedGeneration) throws Exception {
         long attempt;
         synchronized (state) {
@@ -311,6 +335,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
                 session = opened;
                 approvalKey = key;
                 clearConnectionState();
+                lastReceivedAt = nowMillis();
                 candidate = null;
                 activeAttempt = 0;
                 return opened;
@@ -361,6 +386,15 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
 
     public boolean isCurrentSession(WebSocketSession source) {
         synchronized (state) { return running && session == source; }
+    }
+
+    /** 메시지 파싱·DB 체결 전에 수신을 기록하며 이전 연결의 메시지는 무시합니다. */
+    public boolean messageReceived(WebSocketSession source) {
+        synchronized (state) {
+            if (!running || source == null || (session != source && candidate != source)) return false;
+            if (session == source) lastReceivedAt = nowMillis();
+            return true;
+        }
     }
 
     private void failed(long startedGeneration) {

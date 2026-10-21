@@ -218,15 +218,20 @@ public class OrderQuoteSubscriptionIntegrationTest {
 
     @Test
     public void restoredServerQuotesFillWithoutBrowserAndDoNotReviveCancelledOrders() throws Exception {
-        verifyRestoredServerQuotes(false);
+        verifyRestoredServerQuotes(false, false);
     }
 
     @Test
     public void ackTimeoutRecoveryPreservesServerOrderRefsAndExecution() throws Exception {
-        verifyRestoredServerQuotes(true);
+        verifyRestoredServerQuotes(true, false);
     }
 
-    private void verifyRestoredServerQuotes(boolean missingAck) throws Exception {
+    @Test
+    public void silenceRecoveryPreservesServerOrderRefsAndExecution() throws Exception {
+        verifyRestoredServerQuotes(false, true);
+    }
+
+    private void verifyRestoredServerQuotes(boolean missingAck, boolean silentConnection) throws Exception {
         Long order = create(buyer, "BUY", 3, 1100);
         ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
         channel.subscribe(message -> { });
@@ -266,7 +271,12 @@ public class OrderQuoteSubscriptionIntegrationTest {
                 KisWebSocketRecoveryTest.Connection old = manager.connection;
                 manager.handler.handleMessage(old.session, quote);
                 assertEquals("PARTIAL", status(order));
-                oldHandler.afterConnectionClosed(old.session, CloseStatus.SERVER_ERROR);
+                if (silentConnection) {
+                    manager.advance(90000);
+                    assertFalse("Silent open socket must be replaced without a close callback", old.open.get());
+                } else {
+                    oldHandler.afterConnectionClosed(old.session, CloseStatus.SERVER_ERROR);
+                }
                 timer.task.run();
                 manager.advance(1000);
                 assertEquals(1, manager.connection.messages.size());
@@ -287,7 +297,12 @@ public class OrderQuoteSubscriptionIntegrationTest {
                 Long cancelled = create(buyer, "BUY", 1, 1100);
                 timer.task.run();
                 manager.tick();
-                manager.handler.afterConnectionClosed(manager.connection.session, CloseStatus.NORMAL);
+                if (silentConnection) {
+                    manager.advance(90000);
+                    assertFalse(manager.connection.open.get());
+                } else {
+                    manager.handler.afterConnectionClosed(manager.connection.session, CloseStatus.NORMAL);
+                }
                 assertTrue(orderService.cancelOrder(cancelled, buyer));
                 timer.task.run();
                 int before = manager.attempts;

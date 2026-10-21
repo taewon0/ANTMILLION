@@ -9,6 +9,7 @@ import java.util.Map;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
@@ -75,6 +76,7 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 
 	@Override
 	protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+		if (connectionAttempt != 0 && !manager.messageReceived(session)) return;
 		// 역할: 데이터 수신 응답 및 처리 (OnMessage)
 		String payload = message.getPayload();
 		// JSON 응답은 TR·종목·성공 여부로 구독 대기 요청에 연결합니다.
@@ -150,6 +152,11 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 		} catch (Exception e) {
 			log.error("### [ERROR] 데이터 처리 오류: {} ###", e.getMessage(), e);
 		}
+	}
+
+	@Override
+	protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+		if (connectionAttempt != 0) manager.messageReceived(session);
 	}
 
 	private void handleSystemResponse(WebSocketSession session, String payload) {
