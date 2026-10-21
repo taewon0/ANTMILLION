@@ -218,6 +218,15 @@ public class OrderQuoteSubscriptionIntegrationTest {
 
     @Test
     public void restoredServerQuotesFillWithoutBrowserAndDoNotReviveCancelledOrders() throws Exception {
+        verifyRestoredServerQuotes(false);
+    }
+
+    @Test
+    public void ackTimeoutRecoveryPreservesServerOrderRefsAndExecution() throws Exception {
+        verifyRestoredServerQuotes(true);
+    }
+
+    private void verifyRestoredServerQuotes(boolean missingAck) throws Exception {
         Long order = create(buyer, "BUY", 3, 1100);
         ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
         channel.subscribe(message -> { });
@@ -230,8 +239,23 @@ public class OrderQuoteSubscriptionIntegrationTest {
             manager.start();
             recovering.start();
             try {
+                manager.autoAcknowledge = !missingAck;
                 timer.task.run();
                 manager.tick();
+                if (missingAck) {
+                    KisWebSocketRecoveryTest.Connection unconfirmed = manager.connection;
+                    KisWebSocketHandler unconfirmedHandler = manager.handler;
+                    manager.advance(5000);
+                    assertFalse(unconfirmed.open.get());
+                    assertEquals("WAIT", status(order));
+                    assertEquals(Integer.valueOf(0), jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM trade_log WHERE order_id=?", Integer.class, order));
+                    manager.autoAcknowledge = true;
+                    manager.advance(1000);
+                    assertEquals(1, manager.connection.messages.size());
+                    KisWebSocketRecoveryTest.Manager.response(unconfirmedHandler, unconfirmed,
+                            "QS0001", "H0STASP0", "1", "SYNTHETIC REJECTION");
+                }
                 String[] fields = new String[38];
                 Arrays.fill(fields, "0");
                 fields[0] = "QS0001";

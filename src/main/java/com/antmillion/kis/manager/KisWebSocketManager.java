@@ -21,22 +21,28 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-/** 참조의 희망 상태와 연결별 전송 상태를 분리하고 전용 단일 스레드에서 복원합니다. */
+/** 희망 참조·ACK 대기·승인 상태를 분리하고 전용 단일 스레드에서 복원합니다. */
 @Slf4j
 @Service
 public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
+    private static final int MAX_ACK_RETRIES = 2;
     private final KisApiService kisApiService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TradingEngineService tradingEngineService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Object state = new Object();
     private final Map<String, Subscription> desired = new LinkedHashMap<>();
-    private final Map<String, Subscription> sent = new LinkedHashMap<>();
+    private final Map<String, Subscription> confirmed = new LinkedHashMap<>();
+    private final Map<String, Pending> pending = new LinkedHashMap<>();
+    // 응답에는 요청 ID가 없습니다. 같은 연결에서 같은 구독을 다시 보내지 않습니다.
+    private final Set<String> attempted = new HashSet<>();
     private Environment environment;
     private ThreadPoolTaskScheduler scheduler;
     private ThreadPoolTaskExecutor handshakeExecutor;
@@ -107,6 +113,16 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
 
     private static String key(String stockCode, String trId) { return trId + ":" + stockCode; }
 
+    private boolean hasLiveSubscriptions() {
+        return desired.values().stream().anyMatch(subscription -> !subscription.suspended);
+    }
+
+    private void clearConnectionState() {
+        confirmed.clear();
+        pending.clear();
+        attempted.clear();
+    }
+
     private void reconcile(long startedGeneration) {
         WebSocketSession current;
         synchronized (state) {
@@ -120,10 +136,10 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             }
             synchronized (state) {
                 if (!running || generation != startedGeneration) return;
-                if (desired.isEmpty()) {
+                if (!hasLiveSubscriptions()) {
                     current = session;
                     session = null;
-                    sent.clear();
+                    clearConnectionState();
                     retryAt = 0;
                     retryDelay = 1000;
                 } else {
@@ -132,12 +148,13 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             }
             if (current != null) close(current);
             synchronized (state) {
-                if (!running || generation != startedGeneration || desired.isEmpty()
+                if (!running || generation != startedGeneration || !hasLiveSubscriptions()
                         || (retryAt != 0 && nowMillis() < retryAt)) return;
                 current = session;
             }
             if (current == null) current = connect(startedGeneration);
             if (current == null) return;
+            if (expireAcknowledgements(current, startedGeneration)) return;
             // 연결 대기 중 바뀐 참조를 다시 읽어 이전 스냅샷을 재전송하지 않습니다.
             Map<String, Subscription> additions;
             Map<String, Subscription> removals;
@@ -145,17 +162,21 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             synchronized (state) {
                 if (!running || generation != startedGeneration || session != current) return;
                 additions = new LinkedHashMap<>(desired);
-                additions.keySet().removeAll(sent.keySet());
-                removals = new LinkedHashMap<>(sent);
-                removals.keySet().removeAll(desired.keySet());
+                additions.entrySet().removeIf(entry -> entry.getValue().suspended
+                        || confirmed.containsKey(entry.getKey()) || pending.containsKey(entry.getKey()));
+                removals = new LinkedHashMap<>(confirmed);
+                removals.entrySet().removeIf(entry -> desired.get(entry.getKey()) == entry.getValue()
+                        || pending.containsKey(entry.getKey()));
                 currentApprovalKey = approvalKey;
             }
             apply(current, startedGeneration, currentApprovalKey, removals, false);
             apply(current, startedGeneration, currentApprovalKey, additions, true);
             synchronized (state) {
                 if (!running || generation != startedGeneration || session != current) return;
-                retryDelay = 1000;
-                retryAt = 0;
+                if (pending.isEmpty()) {
+                    retryDelay = 1000;
+                    retryAt = 0;
+                }
             }
         } catch (Exception e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
@@ -167,26 +188,107 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private void apply(WebSocketSession current, long startedGeneration, String key,
             Map<String, Subscription> changes, boolean subscribing) throws IOException {
         for (Map.Entry<String, Subscription> entry : changes.entrySet()) {
+            Pending request;
+            boolean reused;
             synchronized (state) {
                 if (!running || generation != startedGeneration || session != current) return;
-                if (subscribing ? desired.get(entry.getKey()) != entry.getValue()
-                        : desired.containsKey(entry.getKey())) continue;
+                if (pending.containsKey(entry.getKey())) continue;
+                if (subscribing ? desired.get(entry.getKey()) != entry.getValue() || entry.getValue().suspended
+                        : desired.get(entry.getKey()) == entry.getValue()) continue;
+                reused = subscribing && attempted.contains(entry.getKey());
+                request = new Pending(entry.getValue(), subscribing, nowMillis());
+                if (!reused) {
+                    // sendMessage 안에서 ACK가 들어와도 대기 요청이 먼저 보여야 합니다.
+                    pending.put(entry.getKey(), request);
+                    if (subscribing) attempted.add(entry.getKey());
+                }
+            }
+            if (reused) {
+                reconnect(current, startedGeneration, 1000);
+                return;
             }
             // 네트워크 전송 중에도 구독/해제 참조를 갱신할 수 있습니다.
             sendSubscription(current, entry.getValue(), subscribing ? "1" : "2", key);
-            synchronized (state) {
-                if (!running || generation != startedGeneration || session != current) return;
-                // 이미 전송 중이던 프레임은 기록해 다음 조회에서 해제/재획득으로 보정합니다.
-                if (subscribing) sent.put(entry.getKey(), entry.getValue());
-                else sent.remove(entry.getKey());
+        }
+    }
+
+    /** 현재 연결의 대기 요청에만 응답을 적용합니다. 원문/approval/복호화 key는 기록하지 않습니다. */
+    public void acknowledge(WebSocketSession source, String stockCode, String trId,
+            boolean success, boolean unsubscribing) {
+        synchronized (state) {
+            if (!running || session != source) return;
+            String key = key(stockCode, trId);
+            Pending request = pending.get(key);
+            if (request == null || request.failed || (success && request.subscribing == unsubscribing)) return;
+            pending.remove(key);
+            if (success) {
+                if (request.subscribing) {
+                    confirmed.put(key, request.subscription);
+                    request.subscription.timeouts = 0;
+                } else {
+                    confirmed.remove(key);
+                }
+                if (pending.isEmpty()) {
+                    retryDelay = 1000;
+                    retryAt = 0;
+                }
+            } else if (request.subscribing) {
+                request.subscription.suspended = true;
+                log.warn("KIS subscription suspended after rejection: TR={}, stock={}", trId, stockCode);
+            } else {
+                // 해제 거절은 원격 참조가 남을 수 있으므로 worker가 연결을 교체합니다.
+                request.failed = true;
+                pending.put(key, request);
             }
         }
+    }
+
+    private boolean expireAcknowledgements(WebSocketSession current, long startedGeneration) {
+        long delay = 0;
+        synchronized (state) {
+            if (!running || generation != startedGeneration || session != current) return true;
+            long now = nowMillis();
+            for (Pending request : pending.values()) {
+                if (!request.failed && now - request.startedAt < acknowledgementTimeoutMillis()) continue;
+                delay = Math.max(delay, 1000);
+                Subscription subscription = request.subscription;
+                if (request.subscribing && desired.get(key(subscription.stockCode, subscription.trId)) == subscription) {
+                    if (++subscription.timeouts > MAX_ACK_RETRIES) {
+                        subscription.suspended = true;
+                        log.warn("KIS subscription suspended after ACK timeout: TR={}, stock={}",
+                                subscription.trId, subscription.stockCode);
+                    } else {
+                        delay = Math.max(delay, subscription.timeouts * 1000L);
+                    }
+                }
+            }
+            if (delay != 0) {
+                // 만료 판정과 연결 폐기를 원자적으로 처리해 뒤늦은 ACK가 예산을 되돌리지 못하게 합니다.
+                session = null;
+                clearConnectionState();
+                retryAt = now + delay;
+            }
+        }
+        if (delay == 0) return false;
+        // 동일 연결 재송신은 늦은 ACK를 새 요청으로 오인할 수 있어 새 연결에서 복원합니다.
+        close(current);
+        return true;
+    }
+
+    private void reconnect(WebSocketSession current, long startedGeneration, long delay) {
+        synchronized (state) {
+            if (!running || generation != startedGeneration || session != current) return;
+            session = null;
+            clearConnectionState();
+            retryAt = nowMillis() + delay;
+        }
+        close(current);
     }
 
     private WebSocketSession connect(long startedGeneration) throws Exception {
         long attempt;
         synchronized (state) {
-            if (!running || generation != startedGeneration || desired.isEmpty()) return null;
+            if (!running || generation != startedGeneration || !hasLiveSubscriptions()) return null;
             activeAttempt = attempt = ++attemptSequence;
         }
         ListenableFuture<WebSocketSession> future = null;
@@ -194,7 +296,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
         try {
             String key = requestApprovalKey();
             synchronized (state) {
-                if (!running || generation != startedGeneration || activeAttempt != attempt || desired.isEmpty()) return null;
+                if (!running || generation != startedGeneration || activeAttempt != attempt || !hasLiveSubscriptions()) return null;
             }
             future = handshake(new KisWebSocketHandler(this, key, messagingTemplate, objectMapper,
                     tradingEngineService, attempt));
@@ -205,10 +307,10 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             opened = future.get(handshakeTimeoutMillis(), TimeUnit.MILLISECONDS);
             synchronized (state) {
                 if (!running || generation != startedGeneration || activeAttempt != attempt
-                        || desired.isEmpty() || !opened.isOpen()) return null;
+                        || !hasLiveSubscriptions() || !opened.isOpen()) return null;
                 session = opened;
                 approvalKey = key;
-                sent.clear();
+                clearConnectionState();
                 candidate = null;
                 activeAttempt = 0;
                 return opened;
@@ -232,7 +334,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     /** 시간 초과·종료 후 늦게 성립한 연결도 닫습니다. */
     public void connectionEstablished(WebSocketSession opened, long attempt) {
         synchronized (state) {
-            if (running && activeAttempt == attempt && !desired.isEmpty()) {
+            if (running && activeAttempt == attempt && hasLiveSubscriptions()) {
                 candidate = opened;
                 return;
             }
@@ -251,7 +353,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             } else {
                 return;
             }
-            sent.clear();
+            clearConnectionState();
             delayRetry();
         }
         close(lost);
@@ -267,8 +369,8 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             if (!running || generation != startedGeneration) return;
             failed = session;
             session = null;
-            sent.clear();
-            if (!desired.isEmpty() && (retryAt == 0 || nowMillis() >= retryAt)) delayRetry();
+            clearConnectionState();
+            if (hasLiveSubscriptions() && (retryAt == 0 || nowMillis() >= retryAt)) delayRetry();
         }
         close(failed);
     }
@@ -332,7 +434,11 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             session = null;
             pending = candidate;
             candidate = null;
-            sent.clear();
+            clearConnectionState();
+            for (Subscription subscription : desired.values()) {
+                subscription.suspended = false;
+                subscription.timeouts = 0;
+            }
             retryAt = 0;
             retryDelay = 1000;
         }
@@ -351,6 +457,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     protected ThreadPoolTaskScheduler createScheduler() { return new ThreadPoolTaskScheduler(); }
     protected long nowMillis() { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime()); }
     protected long handshakeTimeoutMillis() { return 5000; }
+    protected long acknowledgementTimeoutMillis() { return 5000; }
     protected String requestApprovalKey() { return kisApiService.getKisApprovalKey(); }
 
     protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler) {
@@ -369,6 +476,20 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private static class Subscription {
         private final String stockCode;
         private final String trId;
+        private boolean suspended;
+        private int timeouts;
         private Subscription(String stockCode, String trId) { this.stockCode = stockCode; this.trId = trId; }
+    }
+
+    private static class Pending {
+        private final Subscription subscription;
+        private final boolean subscribing;
+        private final long startedAt;
+        private boolean failed;
+        private Pending(Subscription subscription, boolean subscribing, long startedAt) {
+            this.subscription = subscription;
+            this.subscribing = subscribing;
+            this.startedAt = startedAt;
+        }
     }
 }
