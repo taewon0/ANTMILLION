@@ -121,7 +121,7 @@ public class KisMinuteChartControllerTest {
     }
 
     private KisController controller(MinuteChartProvider provider) {
-        return new KisController(null, null, null, provider);
+        return new KisController(null, null, null, provider, null);
     }
 
     private MockMvc mvc(MinuteChartProvider provider) {
