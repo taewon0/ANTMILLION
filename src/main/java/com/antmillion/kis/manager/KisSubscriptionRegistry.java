@@ -1,6 +1,5 @@
 package com.antmillion.kis.manager;
 
-import com.antmillion.kis.constant.KisWebSocketTrId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Profile;
@@ -88,14 +87,13 @@ public class KisSubscriptionRegistry {
 
     private SharedSubscription shared(String destination, String kind, String stockCode) {
         return subscriptions.computeIfAbsent(destination, ignored -> new SharedSubscription(stockCode,
-                "present".equals(kind) ? KisWebSocketTrId.getCurrentPresentTrId()
-                        : KisWebSocketTrId.getCurrentAskBidTrId()));
+                "present".equals(kind)));
     }
 
     private void acquire(SharedSubscription shared) {
         if (shared.requested) return;
         try {
-            manager.subscribe(shared.stockCode, shared.trId);
+            manager.subscribeCurrentMarket(shared.stockCode, shared.present);
             shared.requested = true;
         } catch (RuntimeException e) {
             // STOMP 구독이 남아 있으므로 다음 획득 재시도를 위해 소유권을 유지합니다.
@@ -123,8 +121,8 @@ public class KisSubscriptionRegistry {
             subscriptions.remove(destination);
             if (!shared.requested) return;
             try {
-                // 장 마감 시각이 지나도 구독 획득 당시 선택한 TR로 해제합니다.
-                manager.unsubscribe(shared.stockCode, shared.trId);
+                // TR 전환 여부와 무관하게 같은 종목·시세 종류의 마지막 참조를 해제합니다.
+                manager.unsubscribeCurrentMarket(shared.stockCode, shared.present);
             } catch (RuntimeException e) {
                 log.warn("KIS subscription release failed: {}", e.getClass().getSimpleName());
             }
@@ -133,13 +131,13 @@ public class KisSubscriptionRegistry {
 
     private static class SharedSubscription {
         private final String stockCode;
-        private final String trId;
+        private final boolean present;
         private int references;
         private boolean requested;
 
-        private SharedSubscription(String stockCode, String trId) {
+        private SharedSubscription(String stockCode, boolean present) {
             this.stockCode = stockCode;
-            this.trId = trId;
+            this.present = present;
         }
     }
 }

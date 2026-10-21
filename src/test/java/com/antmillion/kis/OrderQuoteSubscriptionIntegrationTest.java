@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.time.LocalTime;
 
 import static org.junit.Assert.*;
 
@@ -229,6 +230,79 @@ public class OrderQuoteSubscriptionIntegrationTest {
     @Test
     public void silenceRecoveryPreservesServerOrderRefsAndExecution() throws Exception {
         verifyRestoredServerQuotes(false, true);
+    }
+
+    @Test
+    public void marketRotationKeepsBrowserlessBuySellExecutionAndCannotRestoreCancelledOrders() throws Exception {
+        Long buy = create(buyer, "BUY", 3, 1100);
+        jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) VALUES(?,'QS0001',3,2700,900)", seller);
+        Long sell = create(seller, "SELL", 3, 1000);
+        ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
+        channel.subscribe(message -> { });
+        try (KisWebSocketRecoveryTest.Manager manager = new KisWebSocketRecoveryTest.Manager(
+                new SimpMessagingTemplate(channel), engine)) {
+            manager.market = LocalTime.of(15, 29, 59);
+            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            OrderQuoteSubscriptionSchedulerTest.Worker timer = new OrderQuoteSubscriptionSchedulerTest.Worker();
+            OrderQuoteSubscriptionScheduler recovering = OrderQuoteSubscriptionSchedulerTest.scheduler(
+                    orders, registry, transactionManager, timer);
+            manager.start();
+            recovering.start();
+            try {
+                timer.task.run();
+                manager.tick();
+                KisWebSocketRecoveryTest.Connection old = manager.connection;
+                KisWebSocketHandler oldHandler = manager.handler;
+                String[] fields = new String[38];
+                Arrays.fill(fields, "0");
+                fields[0] = "QS0001";
+                fields[3] = "1100";
+                fields[13] = "1000";
+                fields[23] = "1";
+                fields[33] = "1";
+                TextMessage first = new TextMessage("0|H0STASP0|001|" + String.join("^", fields));
+                oldHandler.handleMessage(old.session, first);
+                assertEquals("PARTIAL", status(buy));
+                assertEquals("PARTIAL", status(sell));
+                manager.market = LocalTime.of(15, 30);
+                manager.tick();
+                assertFalse(old.open.get());
+                assertEquals(1, manager.connection.messages.size());
+                assertTrue(manager.connection.messages.get(0).contains("H0UNASP0"));
+                // 이전 연결의 호가·거절은 새 구독이나 체결에 영향을 주지 않습니다.
+                oldHandler.handleMessage(old.session, first);
+                KisWebSocketRecoveryTest.Manager.response(oldHandler, old, "QS0001", "H0STASP0", "1", "SYNTHETIC REJECTION");
+                assertEquals(Integer.valueOf(2), jdbc.queryForObject("SELECT SUM(trade_quantity) FROM trade_log", Integer.class));
+                fields[23] = "2";
+                fields[33] = "2";
+                TextMessage next = new TextMessage("0|H0UNASP0|001|" + String.join("^", fields));
+                manager.handler.handleMessage(manager.connection.session, next);
+                assertEquals("COMPLETED", status(buy));
+                assertEquals("COMPLETED", status(sell));
+                assertEquals(Long.valueOf(96700), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, buyer));
+                assertEquals(Long.valueOf(103000), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, seller));
+                assertEquals(Integer.valueOf(3), jdbc.queryForObject("SELECT quantity FROM asset WHERE account_id=?", Integer.class, buyer));
+                assertEquals(Integer.valueOf(0), jdbc.queryForObject("SELECT COUNT(*) FROM asset WHERE account_id=?", Integer.class, seller));
+                assertEquals(Long.valueOf(300), jdbc.queryForObject("SELECT SUM(realized_profit) FROM realized_pnl WHERE account_id=?", Long.class, seller));
+                timer.task.run();
+                manager.tick();
+                assertFalse(manager.connection.open.get());
+
+                Long cancelled = create(buyer, "BUY", 1, 1100);
+                timer.task.run();
+                manager.tick();
+                manager.connectionLost(manager.connection.session);
+                manager.market = LocalTime.MIDNIGHT;
+                assertTrue(orderService.cancelOrder(cancelled, buyer));
+                timer.task.run();
+                int attempts = manager.attempts;
+                manager.advance(60000);
+                assertEquals(attempts, manager.attempts);
+                assertEquals("CANCEL", status(cancelled));
+                assertEquals(Integer.valueOf(0), jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM trade_log WHERE order_id=?", Integer.class, cancelled));
+            } finally { recovering.stop(); }
+        }
     }
 
     private void verifyRestoredServerQuotes(boolean missingAck, boolean silentConnection) throws Exception {

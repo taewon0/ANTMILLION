@@ -1,6 +1,7 @@
 package com.antmillion.kis.manager;
 
 import com.antmillion.kis.dto.KisWebSocketTransactionPriceRequest;
+import com.antmillion.kis.constant.KisWebSocketTrId;
 import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.service.KisApiService;
 import com.antmillion.stock.service.TradingEngineService;
@@ -20,6 +21,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 import java.io.IOException;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -119,6 +122,62 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
         synchronized (state) { desired.remove(key(stockCode, trId)); }
     }
 
+    /** 화면·주문 참조는 TR 대신 종목·시세 종류를 유지하고 worker가 현재 앱 정책을 적용합니다. */
+    public void subscribeCurrentMarket(String stockCode, boolean present) {
+        synchronized (state) {
+            if (desired.values().stream().anyMatch(subscription -> subscription.followsMarket
+                    && subscription.stockCode.equals(stockCode)
+                    && KisWebSocketTrId.isPresentPriceTrId(subscription.trId) == present)) return;
+            String trId = present ? KisWebSocketTrId.getPresentTrId(marketTime())
+                    : KisWebSocketTrId.getAskBidTrId(marketTime());
+            Subscription subscription = new Subscription(stockCode, trId);
+            subscription.followsMarket = true;
+            desired.putIfAbsent(key(stockCode, trId), subscription);
+        }
+    }
+
+    public void unsubscribeCurrentMarket(String stockCode, boolean present) {
+        synchronized (state) {
+            desired.values().removeIf(subscription -> subscription.followsMarket
+                    && subscription.stockCode.equals(stockCode)
+                    && KisWebSocketTrId.isPresentPriceTrId(subscription.trId) == present);
+        }
+    }
+
+    /** 전환과 연결 폐기를 함께 반영해 이전 연결의 늦은 ACK·호가가 새 TR에 적용되지 않게 합니다. */
+    private WebSocketSession rotateMarketSubscriptions(long startedGeneration) {
+        synchronized (state) {
+            if (!running || generation != startedGeneration) return null;
+            LocalTime time = marketTime();
+            Map<String, Subscription> next = new LinkedHashMap<>();
+            boolean changed = false;
+            for (Subscription subscription : desired.values()) {
+                String trId = subscription.trId;
+                if (subscription.followsMarket) {
+                    trId = KisWebSocketTrId.isPresentPriceTrId(trId)
+                            ? KisWebSocketTrId.getPresentTrId(time) : KisWebSocketTrId.getAskBidTrId(time);
+                }
+                Subscription replacement = subscription;
+                if (!trId.equals(subscription.trId)) {
+                    replacement = new Subscription(subscription.stockCode, trId);
+                    replacement.followsMarket = true;
+                    replacement.suspended = subscription.suspended;
+                    replacement.timeouts = subscription.timeouts;
+                    changed = true;
+                }
+                next.put(key(replacement.stockCode, replacement.trId), replacement);
+            }
+            if (!changed) return null;
+            desired.clear();
+            desired.putAll(next);
+            WebSocketSession previous = session;
+            session = null;
+            clearConnectionState();
+            // 기존 장애 대기·거절 보류·ACK 재시도 예산은 장 전환으로 초기화하지 않습니다.
+            return previous;
+        }
+    }
+
     private static String key(String stockCode, String trId) { return trId + ":" + stockCode; }
 
     private boolean hasLiveSubscriptions() {
@@ -142,6 +201,8 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
                 connectionLost(current);
                 current = null;
             }
+            if (current != null && expireAcknowledgements(current, startedGeneration)) return;
+            close(rotateMarketSubscriptions(startedGeneration));
             synchronized (state) {
                 if (!running || generation != startedGeneration) return;
                 if (!hasLiveSubscriptions()) {
@@ -163,6 +224,9 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             if (current == null) current = connect(startedGeneration);
             if (current == null) return;
             if (expireAcknowledgements(current, startedGeneration)) return;
+            // approval/handshake를 기다리는 동안 전환 시각을 지났을 수도 있습니다.
+            close(rotateMarketSubscriptions(startedGeneration));
+            if (!isCurrentSession(current)) return;
             if (expireReceive(current, startedGeneration)) return;
             // 연결 대기 중 바뀐 참조를 다시 읽어 이전 스냅샷을 재전송하지 않습니다.
             Map<String, Subscription> additions;
@@ -490,6 +554,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
 
     protected ThreadPoolTaskScheduler createScheduler() { return new ThreadPoolTaskScheduler(); }
     protected long nowMillis() { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime()); }
+    protected LocalTime marketTime() { return LocalTime.now(ZoneId.of("Asia/Seoul")); }
     protected long handshakeTimeoutMillis() { return 5000; }
     protected long acknowledgementTimeoutMillis() { return 5000; }
     protected String requestApprovalKey() { return kisApiService.getKisApprovalKey(); }
@@ -510,6 +575,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private static class Subscription {
         private final String stockCode;
         private final String trId;
+        private boolean followsMarket;
         private boolean suspended;
         private int timeouts;
         private Subscription(String stockCode, String trId) { this.stockCode = stockCode; this.trId = trId; }
