@@ -12,6 +12,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.messaging.support.ExecutorSubscribableChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.web.socket.messaging.SessionConnectEvent;
@@ -22,10 +23,13 @@ import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.util.concurrent.SettableListenableFuture;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -157,6 +161,187 @@ public class KisWebSocketRecoveryTest {
             catch (Exception e) { throw new AssertionError(e); }
         }
         @Override public void close() { stop(); }
+    }
+
+    @Test
+    public void silentOpenSocketExpiresAtNinetySecondsAndRestoresOnlyRemainingRefs() throws Exception {
+        try (Manager manager = new Manager()) {
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            Connection old = manager.connection;
+            KisWebSocketHandler oldHandler = manager.handler;
+            manager.unsubscribe("000660", "H0STASP0");
+            manager.tick();
+            manager.advance(89999);
+            assertTrue(old.open.get());
+            // 송신 성공만으로 상대편 수신이 살아 있다고 판단하지 않습니다.
+            manager.echoHeartbeat(old.session, "{\"header\":{\"tr_id\":\"PINGPONG\"}}");
+            manager.advance(1);
+            assertFalse("An open socket with no inbound traffic must be replaced", old.open.get());
+            assertEquals(1, manager.attempts);
+            manager.advance(999);
+            assertEquals(1, manager.attempts);
+            manager.advance(1);
+            assertEquals(2, manager.attempts);
+            assertEquals(1, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.get(0).contains("005930"));
+            Connection restored = manager.connection;
+            manager.advance(89999);
+            Manager.receive(oldHandler, old, "{\"header\":{\"tr_id\":\"PINGPONG\"}}");
+            Manager.response(oldHandler, old, "005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            oldHandler.handleMessage(old.session, new PongMessage(ByteBuffer.allocate(0)));
+            oldHandler.afterConnectionClosed(old.session, CloseStatus.NORMAL);
+            manager.advance(1);
+            assertFalse("Old callbacks must not extend the new connection's receive deadline", restored.open.get());
+        }
+    }
+
+    @Test
+    public void heartbeatRealtimeAndPongKeepConnectionAliveWithoutRequiringTicks() throws Exception {
+        ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
+        channel.subscribe(message -> { });
+        for (String kind : List.of("heartbeat", "realtime", "pong")) {
+            try (Manager manager = new Manager(new SimpMessagingTemplate(channel), null)) {
+                manager.start();
+                manager.subscribe("005930", "H0STCNT0");
+                manager.tick();
+                Connection original = manager.connection;
+                for (int i = 0; i < 4; i++) {
+                    manager.advance(45000);
+                    if ("heartbeat".equals(kind)) {
+                        Manager.receive(manager.handler, original, "{\"header\":{\"tr_id\":\"PINGPONG\"}}");
+                    } else if ("pong".equals(kind)) {
+                        manager.handler.handleMessage(original.session, new PongMessage(ByteBuffer.allocate(0)));
+                    } else {
+                        String[] fields = new String[23];
+                        Arrays.fill(fields, "0");
+                        fields[0] = "005930";
+                        fields[2] = "1000";
+                        Manager.receive(manager.handler, original, "0|H0STCNT0|001|" + String.join("^", fields));
+                    }
+                    assertTrue(kind, original.open.get());
+                    assertEquals(kind, 1, manager.attempts);
+                }
+                manager.advance(89999);
+                assertTrue(original.open.get());
+                manager.advance(1);
+                assertFalse(kind, original.open.get());
+            }
+        }
+    }
+
+    @Test
+    public void receiveTimeoutIsConfigurableAndInvalidValuesFailBeforeStartingResources() {
+        try (Manager manager = new Manager()) {
+            for (String invalid : List.of("0", "-1", "5000", "invalid")) {
+                manager.setEnvironment(new MockEnvironment().withProperty("kis.websocket.receive-timeout-millis", invalid));
+                try {
+                    manager.start();
+                    fail("Invalid receive timeout must fail before starting the recovery worker");
+                } catch (RuntimeException expected) {
+                    assertFalse(manager.isRunning());
+                    assertNull(manager.timer);
+                    assertEquals(0, manager.approvals);
+                }
+            }
+            manager.setEnvironment(new MockEnvironment().withProperty("kis.websocket.receive-timeout-millis", "180000"));
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            manager.advance(179999);
+            assertTrue(manager.connection.open.get());
+            manager.advance(1);
+            assertFalse(manager.connection.open.get());
+        }
+    }
+
+    @Test
+    public void silenceRecoveryDoesNotResumeRejectedOrAckExhaustedRefs() {
+        for (boolean rejected : List.of(true, false)) {
+            try (Manager manager = new Manager()) {
+                manager.autoAcknowledge = false;
+                manager.start();
+                manager.subscribe("005930", "H0STASP0");
+                manager.subscribe("000660", "H0STASP0");
+                manager.tick();
+                if (rejected) {
+                    manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                    manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+                } else {
+                    for (int attempt = 1; attempt <= 3; attempt++) {
+                        manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                        manager.advance(5000);
+                        if (attempt < 3) manager.advance(attempt * 1000L);
+                    }
+                    manager.autoAcknowledge = true;
+                    manager.advance(1000);
+                }
+                manager.autoAcknowledge = true;
+                Connection old = manager.connection;
+                manager.advance(90000);
+                assertFalse(old.open.get());
+                manager.advance(1000);
+                assertEquals(1, manager.connection.messages.size());
+                assertTrue(manager.connection.messages.get(0).contains("000660"));
+                manager.unsubscribe("000660", "H0STASP0");
+                manager.tick();
+                assertFalse(manager.connection.open.get());
+                int before = manager.attempts;
+                manager.advance(90000);
+                assertEquals("Suspended refs alone must not reconnect", before, manager.attempts);
+            }
+        }
+    }
+
+    @Test
+    public void receiveTrafficCannotExtendAckDeadlineOrResetAckRetryBudget() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                Connection current = manager.connection;
+                manager.advance(4999);
+                Manager.receive(manager.handler, current, "{\"header\":{\"tr_id\":\"PINGPONG\"}}");
+                manager.advance(1);
+                assertFalse("Inbound heartbeat cannot replace the pending subscription ACK", current.open.get());
+                assertEquals(attempt, manager.attempts);
+                if (attempt < 3) manager.advance(attempt * 1000L);
+            }
+            manager.advance(90000);
+            assertEquals(3, manager.attempts);
+        }
+    }
+
+    @Test
+    public void releasingLastRefDuringSilenceBackoffAndStoppingCannotReviveConnection() {
+        try (Manager manager = new Manager()) {
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            manager.advance(90000);
+            assertFalse(manager.connection.open.get());
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.advance(90000);
+            assertEquals(1, manager.attempts);
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            Connection current = manager.connection;
+            Runnable oldWorker = manager.timer.task;
+            manager.stop();
+            manager.now += 90000;
+            oldWorker.run();
+            assertFalse(current.open.get());
+            assertEquals(2, manager.attempts);
+            manager.start();
+            manager.tick();
+            oldWorker.run();
+            assertTrue(manager.connection.open.get());
+            assertEquals(3, manager.attempts);
+        }
     }
 
     @Test
