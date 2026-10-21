@@ -157,3 +157,17 @@ node --test scripts/tests/period-chart.test.cjs
 실제 KisApiService·캐시 repository·limiter에 HTTP·메모리 Redis 대역만 연결합니다.
 날짜가 캐시 키에 포함되지 않는 기존 한계는 유지하며, 실제 설정·DB·Redis·증권사·전체 앱 context는 로드하지 않습니다.
 Java 회귀는 `Test-Trading.ps1`에도 포함됩니다. JS는 실제 차트 함수를 DOM·fetch·차트 라이브러리 대역에서 실행하며 실제 브라우저 검증과 구분합니다.
+
+분봉 Provider와 두 HTTP 경로는 아래 명령으로 별도 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisMinuteChartProviderTest,KisMinuteChartControllerTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisCurrentPriceProviderTest,InterestControllerTest' test
+node --test scripts/tests/minute-chart.test.cjs scripts/tests/period-chart.test.cjs scripts/tests/kis-subscriptions.test.cjs scripts/tests/mock-mode.test.cjs
+```
+
+`/stream`의 날짜·15:30 기준 요청·가격 문자열·원본 역순 반환·1분 캐시와 공유 호출 제한,
+`/candle`의 서버 현재 시각·숫자 가격·누락 가격 0·null 목록/행·기존 limiter 우회를 확인합니다.
+실제 서비스·캐시 repository·limiter에 HTTP·메모리 Redis 대역만 연결하며,
+개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
+일별 분봉 캐시가 요청 일자 대신 서버 오늘 날짜를 쓰는 기존 한계와 두 경로의 시간대 정책은 유지합니다.
+Java 회귀는 `Test-Trading.ps1`에도 포함되며, JS는 메인·상세 화면의 실제 분봉 소비 함수를 대역에서 검증합니다.
