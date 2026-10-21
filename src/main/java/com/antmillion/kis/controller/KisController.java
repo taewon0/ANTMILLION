@@ -4,8 +4,13 @@ import com.antmillion.kis.dto.*;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.kis.service.KisApiService;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
+import com.antmillion.marketdata.dto.MinuteChartRequest;
+import com.antmillion.marketdata.dto.RecentMinuteCandle;
+import com.antmillion.marketdata.provider.MinuteChartProvider;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
+import com.antmillion.stock.dto.MinuteChartResponseDTO;
 import com.antmillion.stock.dto.PeriodChartResponseDTO;
+import com.antmillion.stock.dto.RecentMinuteChartResponseDTO;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.stereotype.Controller;
@@ -31,6 +36,7 @@ public class KisController {
     private final KisApiService kisApiService;
     private final KisWebSocketManager kisWebSocketManager;
     private final PeriodChartProvider periodChartProvider;
+    private final MinuteChartProvider minuteChartProvider;
 
     /**
      * 조회 시작일: 일봉 100일 전, 주봉 52주 전, 월봉 48개월 전, 년봉 30년 전.
@@ -77,32 +83,21 @@ public class KisController {
     
     // 국내 일별 분봉 조회
     @GetMapping("/stream/{stockCode}")
-    public List<StreamMinutePrice> getStreamMinute(@PathVariable String stockCode) {
-        LocalDate localDate = LocalDate.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
-        String today = localDate.format(formatter);
-    	
-    	StreamMinutePriceRequest request = StreamMinutePriceRequest.builder()
-                .condMrktDivCode("J")
-                .inputIscd(stockCode)
-                .inputHour1("153000")
-                .inputDate1(today)
-                .pwDataIncuYn("N")
-                .fakeTickIncuYn("")
-                .build();
-
-        return kisApiService.getStreamMinutePrices(request);
+    public List<MinuteChartResponseDTO> getStreamMinute(@PathVariable("stockCode") String stockCode) {
+        MinuteChartRequest request = new MinuteChartRequest(stockCode, LocalDate.now());
+        return minuteChartProvider.getDailyMinutes(request).stream()
+                .map(price -> price == null ? null : new MinuteChartResponseDTO(price.getDate(), price.getTime(),
+                        price.getClosePrice(), price.getOpenPrice(), price.getHighPrice(), price.getLowPrice()))
+                .collect(Collectors.toList());
     }
     
     @GetMapping("/candle/{stockCode}")
-    public List<DayMinutePrice> getRealtimeCandle(@PathVariable String stockCode) {
-        DayMinutePriceRequest request = DayMinutePriceRequest.builder()
-                .condMrktDivCode("J")
-                .inputIscd(stockCode)
-                .pwDataIncuYn("Y") // 과거 데이터 30개 포함
-                .etcClsCode("0")
-                .build();
-        return kisApiService.getDayMinutePrices(request);
+    public List<RecentMinuteChartResponseDTO> getRealtimeCandle(@PathVariable("stockCode") String stockCode) {
+        List<RecentMinuteCandle> prices = minuteChartProvider.getRecentMinutes(stockCode);
+        return prices == null ? null : prices.stream()
+                .map(price -> price == null ? null : new RecentMinuteChartResponseDTO(price.getTime(),
+                        price.getClosePrice(), price.getOpenPrice(), price.getHighPrice(), price.getLowPrice()))
+                .collect(Collectors.toList());
     }
     // 거래량순 조회
     @GetMapping("/volumeRank")
