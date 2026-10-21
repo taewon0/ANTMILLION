@@ -144,3 +144,16 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisCurrentPriceProviderTes
 실제 설정·Redis·증권사·DB·전체 앱 context는 로드하지 않습니다.
 `Test-Trading.ps1`에도 포함되며, 마이페이지의 비활성 종목·평가 불가·정상 평가 회귀는
 공통 Provider 대역과 실제 Mapper·일회성 DB로 함께 검증합니다.
+
+기간별 차트 Provider와 기존 차트 HTTP/화면 호환성은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisPeriodChartProviderTest,KisPeriodChartControllerTest' test
+node --test scripts/tests/period-chart.test.cjs
+```
+
+일·주·월·년봉의 KRX/수정주가 요청·한국 시각 기준 조회 기간·원본 가격 문자열·누락 값,
+기존 URL/JSON·빈 목록·오류/429·캐시 타입/24시간 TTL·공유 호출 제한을 확인합니다.
+실제 KisApiService·캐시 repository·limiter에 HTTP·메모리 Redis 대역만 연결합니다.
+날짜가 캐시 키에 포함되지 않는 기존 한계는 유지하며, 실제 설정·DB·Redis·증권사·전체 앱 context는 로드하지 않습니다.
+Java 회귀는 `Test-Trading.ps1`에도 포함됩니다. JS는 실제 차트 함수를 DOM·fetch·차트 라이브러리 대역에서 실행하며 실제 브라우저 검증과 구분합니다.
