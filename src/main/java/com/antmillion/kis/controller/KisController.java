@@ -3,6 +3,9 @@ package com.antmillion.kis.controller;
 import com.antmillion.kis.dto.*;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.dto.PeriodChartRequest;
+import com.antmillion.marketdata.provider.PeriodChartProvider;
+import com.antmillion.stock.dto.PeriodChartResponseDTO;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.stereotype.Controller;
@@ -27,15 +30,13 @@ public class KisController {
 
     private final KisApiService kisApiService;
     private final KisWebSocketManager kisWebSocketManager;
+    private final PeriodChartProvider periodChartProvider;
 
     /**
-     * 일봉 : 60일치
-     * 주봉 : 52주치
-     * 월봉 : 24개월치
-     * 년봉 : 10년치
+     * 조회 시작일: 일봉 100일 전, 주봉 52주 전, 월봉 48개월 전, 년봉 30년 전.
      */
     @GetMapping("/periodChart/{stockCode}")
-    public List<ChartStockPrice> periodChart(
+    public List<PeriodChartResponseDTO> periodChart(
             @PathVariable("stockCode") String stockCode,
             @RequestParam("period") String period
     ) {
@@ -50,18 +51,12 @@ public class KisController {
             default: { startDate = endDate.minusDays(100); }
         }
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
-        String startDateStr = startDate.format(formatter);
-        String endDateStr = endDate.format(formatter);
-        ChartStockPriceRequest request = ChartStockPriceRequest.builder()
-                .marketCode("J") //KRX 고정
-                .stockCode(stockCode)
-                .periodCode(period)
-                .startDate(startDateStr)
-                .endDate(endDateStr)
-                .adjPrice("0") //수정주가 고정
-                .build();
-        return kisApiService.getPeriodStockPrices(request);
+        PeriodChartRequest request = new PeriodChartRequest(stockCode, period,
+                startDate.toLocalDate(), endDate.toLocalDate());
+        return periodChartProvider.getPeriodChart(request).stream()
+                .map(price -> price == null ? null : new PeriodChartResponseDTO(price.getDate(), price.getClosePrice(),
+                        price.getOpenPrice(), price.getHighPrice(), price.getLowPrice()))
+                .collect(Collectors.toList());
     }
 
     @GetMapping("/marketIndex/{indexCode}")
