@@ -3,12 +3,15 @@ package com.antmillion.kis.controller;
 import com.antmillion.kis.dto.*;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.dto.MarketIndexChartRequest;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
 import com.antmillion.marketdata.dto.RecentMinuteCandle;
 import com.antmillion.marketdata.provider.MinuteChartProvider;
+import com.antmillion.marketdata.provider.MarketIndexChartProvider;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
 import com.antmillion.stock.dto.MinuteChartResponseDTO;
+import com.antmillion.stock.dto.MarketIndexChartResponseDTO;
 import com.antmillion.stock.dto.PeriodChartResponseDTO;
 import com.antmillion.stock.dto.RecentMinuteChartResponseDTO;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +24,6 @@ import org.springframework.web.socket.WebSocketSession;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -37,6 +39,7 @@ public class KisController {
     private final KisWebSocketManager kisWebSocketManager;
     private final PeriodChartProvider periodChartProvider;
     private final MinuteChartProvider minuteChartProvider;
+    private final MarketIndexChartProvider marketIndexChartProvider;
 
     /**
      * 조회 시작일: 일봉 100일 전, 주봉 52주 전, 월봉 48개월 전, 년봉 30년 전.
@@ -66,19 +69,15 @@ public class KisController {
     }
 
     @GetMapping("/marketIndex/{indexCode}")
-    public List<MarketIndexPrice> marketIndexChart(
+    public List<MarketIndexChartResponseDTO> marketIndexChart(
         @PathVariable("indexCode") String indexCode
     ) {
         ZoneId KST = ZoneId.of("Asia/Seoul");
-        LocalDateTime endDate = LocalDateTime.now(KST);
-        String endDateStr = endDate.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        MarketIndexPriceRequest request = MarketIndexPriceRequest.builder()
-                .periodCode("D")
-                .marketCode("U")
-                .indexCode(indexCode)
-                .endDate(endDateStr)
-                .build();
-        return kisApiService.getMarketIndexPrices(request);
+        MarketIndexChartRequest request = new MarketIndexChartRequest(indexCode, LocalDate.now(KST));
+        return marketIndexChartProvider.getMarketIndexChart(request).stream()
+                .map(price -> price == null ? null : new MarketIndexChartResponseDTO(price.getDate(), price.getCloseValue(),
+                        price.getOpenValue(), price.getHighValue(), price.getLowValue()))
+                .collect(Collectors.toList());
     }
     
     // 국내 일별 분봉 조회

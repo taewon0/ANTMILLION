@@ -103,13 +103,13 @@ public class KisPeriodChartControllerTest {
     @Test
     public void providerFailureStillPropagatesWithoutEmptyFallback() {
         RuntimeException failure = new RuntimeException("synthetic failure");
-        KisController controller = new KisController(null, null, request -> { throw failure; }, null);
+        KisController controller = new KisController(null, null, request -> { throw failure; }, null, null);
         assertSame(failure, assertThrows(RuntimeException.class, () -> controller.periodChart("005930", "D")));
     }
 
     private MockMvc mvc(PeriodChartProvider provider) {
         // 다른 기능의 KIS 서비스·외부 WS manager는 생성하지 않습니다.
-        return MockMvcBuilders.standaloneSetup(new KisController(null, null, provider, null))
+        return MockMvcBuilders.standaloneSetup(new KisController(null, null, provider, null, null))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }
 }
