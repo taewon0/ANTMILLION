@@ -14,6 +14,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.stock.service.TradingEngineService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
@@ -76,17 +77,12 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 	protected void handleTextMessage(WebSocketSession session, TextMessage message) {
 		// 역할: 데이터 수신 응답 및 처리 (OnMessage)
 		String payload = message.getPayload();
-		// 1. PINGPONG 처리
-		if (payload.contains("PINGPONG")) {
-			manager.echoHeartbeat(session, payload);
+		// JSON 응답은 TR·종목·성공 여부로 구독 대기 요청에 연결합니다.
+		if (payload.trim().startsWith("{")) {
+			handleSystemResponse(session, payload);
 			return;
 		}
 		if (connectionAttempt != 0 && !manager.isCurrentSession(session)) return;
-
-		// 2. JSON 응답 처리 (최초 구독 성공 알림 등)
-		if (payload.startsWith("{")) {
-			return;
-		}
 
 		// 3. 실시간 실무 데이터 처리 (문자열 파싱)
 		try {
@@ -153,6 +149,32 @@ public class KisWebSocketHandler extends TextWebSocketHandler {
 			}
 		} catch (Exception e) {
 			log.error("### [ERROR] 데이터 처리 오류: {} ###", e.getMessage(), e);
+		}
+	}
+
+	private void handleSystemResponse(WebSocketSession session, String payload) {
+		if (manager == null) return;
+		try {
+			JsonNode response = objectMapper.readTree(payload);
+			JsonNode header = response.path("header");
+			String trId = header.path("tr_id").asText();
+			if ("PINGPONG".equals(trId)) {
+				manager.echoHeartbeat(session, payload);
+				return;
+			}
+			if (!isAskBidTrId(trId) && !isPresentPriceTrId(trId)) return;
+			String stockCode = header.path("tr_key").asText();
+			JsonNode body = response.path("body");
+			JsonNode result = body.path("rt_cd");
+			if (!stockCode.matches("[A-Za-z0-9]{6}") || !result.isTextual() || result.asText().isEmpty()) return;
+			boolean success = "0".equals(result.asText());
+			String message = body.path("msg1").asText();
+			// 공식 샘플의 UNSUB 구분을 따르며 방향이 불명확한 성공 응답은 승인하지 않습니다.
+			if (success && !message.startsWith("SUBSCRIBE") && !message.startsWith("UNSUBSCRIBE")) return;
+			manager.acknowledge(session, stockCode, trId, success, message.startsWith("UNSUBSCRIBE"));
+		} catch (Exception e) {
+			// 파서 예외에는 응답 원문·복호화 key가 포함될 수 있어 예외 종류만 남깁니다.
+			log.warn("KIS system response ignored: {}", e.getClass().getSimpleName());
 		}
 	}
 

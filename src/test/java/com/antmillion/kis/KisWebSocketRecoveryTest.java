@@ -4,6 +4,8 @@ import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.kis.manager.KisSubscriptionRegistry;
 import com.antmillion.stock.service.TradingEngineService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.Test;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -35,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 import static org.junit.Assert.*;
 
@@ -69,6 +72,7 @@ public class KisWebSocketRecoveryTest {
         CountDownLatch sendStarted;
         CountDownLatch allowSend;
         boolean failSend;
+        Consumer<String> onSend;
         final WebSocketSession session = (WebSocketSession) Proxy.newProxyInstance(
                 WebSocketSession.class.getClassLoader(), new Class<?>[]{WebSocketSession.class}, (proxy, method, args) -> {
                     switch (method.getName()) {
@@ -79,6 +83,7 @@ public class KisWebSocketRecoveryTest {
                             if (allowSend != null && !allowSend.await(2, TimeUnit.SECONDS)) throw new IOException("send gate timed out");
                             if (failSend) throw new IOException("synthetic send failure");
                             messages.add(((TextMessage) args[0]).getPayload());
+                            if (onSend != null) onSend.accept(((TextMessage) args[0]).getPayload());
                             sent.countDown();
                             return null;
                         case "toString": return "synthetic-session";
@@ -95,6 +100,7 @@ public class KisWebSocketRecoveryTest {
         boolean failApproval;
         boolean failHandshake;
         boolean pending;
+        boolean autoAcknowledge = true;
         KisWebSocketHandler handler;
         SettableListenableFuture<WebSocketSession> future;
         Connection connection;
@@ -120,12 +126,36 @@ public class KisWebSocketRecoveryTest {
         }
         void establish(Connection value) {
             connection = value;
+            KisWebSocketHandler receivingHandler = handler;
+            value.onSend = payload -> {
+                if (!autoAcknowledge) return;
+                try {
+                    JsonNode request = new ObjectMapper().readTree(payload);
+                    JsonNode input = request.path("body").path("input");
+                    if (!input.has("tr_key")) return;
+                    response(receivingHandler, value, input.path("tr_key").asText(), input.path("tr_id").asText(),
+                            "0", "2".equals(request.path("header").path("tr_type").asText())
+                                    ? "UNSUBSCRIBE SUCCESS" : "SUBSCRIBE SUCCESS");
+                } catch (Exception e) { throw new AssertionError(e); }
+            };
             try { handler.afterConnectionEstablished(value.session); }
             catch (Exception e) { throw new AssertionError(e); }
             future.set(value.session);
         }
         void tick() { timer.task.run(); }
         void advance(long millis) { now += millis; tick(); }
+        void response(String stock, String trId, String result, String message) {
+            response(handler, connection, stock, trId, result, message);
+        }
+        static void response(KisWebSocketHandler handler, Connection connection, String stock, String trId,
+                String result, String message) {
+            receive(handler, connection, "{\"header\":{\"tr_id\":\"" + trId + "\",\"tr_key\":\"" + stock
+                    + "\"},\"body\":{\"rt_cd\":\"" + result + "\",\"msg_cd\":\"SYNTHETIC\",\"msg1\":\"" + message + "\"}}");
+        }
+        static void receive(KisWebSocketHandler handler, Connection connection, String payload) {
+            try { handler.handleMessage(connection.session, new TextMessage(payload)); }
+            catch (Exception e) { throw new AssertionError(e); }
+        }
         @Override public void close() { stop(); }
     }
 
@@ -332,7 +362,7 @@ public class KisWebSocketRecoveryTest {
             manager.subscribe("005930", "H0STASP0");
             manager.tick();
             Connection old = manager.connection;
-            String heartbeat = "{\"tr_id\":\"PINGPONG\"}";
+            String heartbeat = "{\"header\":{\"tr_id\":\"PINGPONG\"}}";
             manager.handler.handleMessage(old.session, new TextMessage(heartbeat));
             assertEquals(heartbeat, old.messages.get(1));
             old.failSend = true;
@@ -458,6 +488,278 @@ public class KisWebSocketRecoveryTest {
             registry.disconnected(new SessionDisconnectEvent(this, frame(StompCommand.DISCONNECT, "b", null, null), "b", CloseStatus.NORMAL));
             manager.tick();
             assertFalse(manager.connection.open.get());
+        }
+    }
+
+    @Test
+    public void pendingSubscriptionWaitsForAckAndOnlyConfirmedStateAvoidsTimeout() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            manager.advance(4999);
+            assertEquals(1, manager.connection.messages.size());
+            assertTrue(manager.connection.open.get());
+            manager.response("005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.advance(60000);
+            assertEquals(1, manager.attempts);
+            assertTrue(manager.connection.open.get());
+            assertEquals(1, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void missingAckRetriesTwiceWithOneAndTwoSecondDelaysThenSuspends() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            for (long delay : new long[]{1000, 2000}) {
+                Connection old = manager.connection;
+                KisWebSocketHandler oldHandler = manager.handler;
+                manager.advance(5000);
+                assertFalse(old.open.get());
+                Manager.response(oldHandler, old, "005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                int before = manager.attempts;
+                manager.advance(delay - 1);
+                assertEquals(before, manager.attempts);
+                manager.advance(1);
+                assertEquals(before + 1, manager.attempts);
+                assertEquals(1, manager.connection.messages.size());
+            }
+            manager.advance(5000);
+            assertFalse(manager.connection.open.get());
+            manager.subscribe("005930", "H0STASP0");
+            manager.advance(60000);
+            assertEquals(3, manager.attempts);
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            assertEquals(4, manager.attempts);
+            manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+            manager.tick();
+            manager.stop();
+            manager.autoAcknowledge = true;
+            manager.start();
+            manager.tick();
+            assertEquals(5, manager.attempts);
+            manager.advance(60000);
+            assertTrue(manager.connection.open.get());
+        }
+    }
+
+    @Test
+    public void rejectionIsSuspendedAcrossReconnectButOtherTrAndStockRemainLive() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("005930", "H0STCNT0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+            manager.response("005930", "H0STCNT0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.advance(60000);
+            assertEquals(1, manager.attempts);
+            assertEquals(3, manager.connection.messages.size());
+            manager.handler.afterConnectionClosed(manager.connection.session, CloseStatus.SERVER_ERROR);
+            manager.autoAcknowledge = true;
+            manager.advance(1000);
+            assertEquals(2, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.stream().noneMatch(message ->
+                    message.contains("005930") && message.contains("H0STASP0")));
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            assertEquals(3, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void cancellationDuringPendingAckWaitsThenUnsubscribesWithoutRevival() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.tick();
+            assertEquals(2, manager.connection.messages.size());
+            manager.response("005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.tick();
+            assertEquals(3, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.get(2).contains("\"tr_type\":\"2\""));
+            // 직전 구독의 중복 ACK는 해제 승인이 될 수 없습니다.
+            manager.response("005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STASP0", "0", "UNSUBSCRIBE SUCCESS");
+            manager.advance(60000);
+            assertEquals(1, manager.attempts);
+            assertEquals(3, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void rejectedOrTimedOutUnsubscribeReplacesConnectionAndRestoresOnlyRemainingRefs() {
+        for (boolean rejected : new boolean[]{true, false}) {
+            try (Manager manager = new Manager()) {
+                manager.start();
+                manager.subscribe("005930", "H0STASP0");
+                manager.subscribe("000660", "H0STASP0");
+                manager.tick();
+                manager.autoAcknowledge = false;
+                manager.unsubscribe("005930", "H0STASP0");
+                manager.tick();
+                Connection old = manager.connection;
+                if (rejected) manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+                manager.advance(rejected ? 0 : 5000);
+                assertFalse(old.open.get());
+                manager.autoAcknowledge = true;
+                manager.advance(1000);
+                assertEquals(2, manager.attempts);
+                assertEquals(1, manager.connection.messages.size());
+                assertTrue(manager.connection.messages.get(0).contains("000660"));
+                manager.advance(60000);
+                assertEquals(2, manager.attempts);
+            }
+        }
+    }
+
+    @Test
+    public void reacquisitionUsesNewConnectionToDisambiguateDuplicateOldAck() {
+        try (Manager manager = new Manager()) {
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            Connection old = manager.connection;
+            KisWebSocketHandler oldHandler = manager.handler;
+            manager.autoAcknowledge = false;
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.tick();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            assertEquals(3, old.messages.size());
+            manager.response("005930", "H0STASP0", "0", "UNSUBSCRIBE SUCCESS");
+            manager.tick();
+            assertFalse(old.open.get());
+            manager.autoAcknowledge = true;
+            manager.advance(1000);
+            Manager.response(oldHandler, old, "005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+            manager.advance(60000);
+            assertEquals(2, manager.attempts);
+            assertTrue(manager.connection.open.get());
+            assertEquals(2, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void malformedMismatchedAndUnknownResponsesCannotConfirmPendingRequest() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.tick();
+            for (String raw : new String[]{"{broken", "{}", "{\"header\":{\"tr_id\":\"H0STASP0\"}}",
+                    "{\"header\":{\"tr_id\":\"H0STASP0\",\"tr_key\":\"005930\"},\"body\":{\"rt_cd\":0,\"msg1\":\"SUBSCRIBE SUCCESS\"}}"}) {
+                Manager.receive(manager.handler, manager.connection, raw);
+            }
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STCNT0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "UNKNOWN", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STASP0", "0", "UNSUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STASP0", "0", "UNKNOWN SUCCESS");
+            // 본문에 PINGPONG이 있어도 heartbeat로 분류하지 않습니다.
+            manager.response("005930", "H0STASP0", "0", "PINGPONG");
+            assertEquals(1, manager.connection.messages.size());
+            manager.advance(5000);
+            assertFalse(manager.connection.open.get());
+        }
+    }
+
+    @Test
+    public void successfulAckResetsTimeoutBudgetAndTimeoutDoesNotSuspendHealthyRefs() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.advance(5000);
+            manager.advance(1000);
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.response("005930", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.tick();
+            manager.handler.afterConnectionClosed(manager.connection.session, CloseStatus.SERVER_ERROR);
+            manager.advance(1000);
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.advance(5000);
+            int before = manager.attempts;
+            manager.advance(1000);
+            assertEquals(before + 1, manager.attempts);
+            assertEquals(2, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void timeoutExhaustionSuspendsOnlyFailingRefAndDoesNotRetryOnSharedAcquisition() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            manager.start();
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.connected(new SessionConnectEvent(this, frame(StompCommand.CONNECT, "screen", null, null)));
+            registry.subscribed(new SessionSubscribeEvent(this, frame(StompCommand.SUBSCRIBE, "screen", "book", "ask-bid005930")));
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                manager.advance(5000);
+                assertFalse(manager.connection.open.get());
+                if (attempt != 3) manager.advance(attempt * 1000L);
+            }
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.disconnected(new SessionDisconnectEvent(this, frame(StompCommand.DISCONNECT, "screen", null, null),
+                    "screen", CloseStatus.NORMAL));
+            manager.autoAcknowledge = true;
+            manager.advance(1000);
+            assertEquals(1, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.get(0).contains("000660"));
+            manager.advance(60000);
+            assertEquals(4, manager.attempts);
+            registry.replaceOrderStocks(Set.of());
+            registry.replaceOrderStocks(Set.of("005930"));
+            manager.tick();
+            assertEquals(2, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void releasedPendingRefCannotSuspendReacquiredRefOnRejection() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribe("005930", "H0STASP0");
+            manager.subscribe("000660", "H0STASP0");
+            manager.tick();
+            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+            manager.unsubscribe("005930", "H0STASP0");
+            manager.subscribe("005930", "H0STASP0");
+            manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+            manager.tick();
+            assertFalse(manager.connection.open.get());
+            manager.autoAcknowledge = true;
+            manager.advance(1000);
+            manager.advance(60000);
+            assertEquals(2, manager.attempts);
+            assertTrue(manager.connection.open.get());
+            assertEquals(2, manager.connection.messages.size());
         }
     }
 
