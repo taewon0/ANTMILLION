@@ -41,6 +41,16 @@ public class KisSubscriptionRegistryTest {
         Provider() { super(null, null, null); }
 
         @Override
+        public void subscribeCurrentMarket(String stockCode, boolean present) {
+            subscribe(stockCode, present ? "H0STCNT0" : "H0STASP0");
+        }
+
+        @Override
+        public void unsubscribeCurrentMarket(String stockCode, boolean present) {
+            unsubscribe(stockCode, present ? "H0STCNT0" : "H0STASP0");
+        }
+
+        @Override
         public synchronized void subscribe(String stockCode, String trId) {
             if (failSubscribe) throw new IllegalStateException("synthetic subscribe failure");
             acquired.add(stockCode + ":" + trId);

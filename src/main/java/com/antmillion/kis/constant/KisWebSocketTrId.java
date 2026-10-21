@@ -6,10 +6,10 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 
 public enum KisWebSocketTrId {
-    // KRX (정규장 09:00 ~ 15:30)
+    // KRX 전용 시세. 아래 15:30 전환은 증권사 의무가 아닌 기존 앱 정책입니다.
     KRX_PRESENT("H0STCNT0", "실시간체결가-KRX"),
     KRX_ASK_BID("H0STASP0", "실시간호가-KRX"),
-    // 통합 (시간외 15:30 ~ 20:00)
+    // 통합 시세
     UNIFIED_PRESENT("H0UNCNT0", "실시간체결가-통합"),
     UNIFIED_ASK_BID("H0UNASP0", "실시간호가-통합");
 
@@ -27,28 +27,22 @@ public enum KisWebSocketTrId {
      * 현재 시간에 맞는 실시간 체결가 tr_id 반환
      */
     public static String getCurrentPresentTrId() {
-        LocalTime now = LocalTime.now(ZoneId.of("Asia/Seoul"));
-        LocalTime marketClose = LocalTime.of(15, 30);
-
-        if (now.isBefore(marketClose)) {
-            return KRX_PRESENT.getTrId(); // KRX 현재가 TR: H0STCNT0
-        } else {
-            return UNIFIED_PRESENT.getTrId(); // 통합 현재가 TR: H0UNCNT0
-        }
+        return getPresentTrId(LocalTime.now(ZoneId.of("Asia/Seoul")));
     }
 
     /**
      * 현재 시간에 맞는 실시간 호가 tr_id 반환
      */
     public static String getCurrentAskBidTrId() {
-        LocalTime now = LocalTime.now(ZoneId.of("Asia/Seoul"));
-        LocalTime marketClose = LocalTime.of(15, 30);
+        return getAskBidTrId(LocalTime.now(ZoneId.of("Asia/Seoul")));
+    }
 
-        if (now.isBefore(marketClose)) {
-            return KRX_ASK_BID.getTrId(); // KRX 호가 TR: H0STASP0
-        } else {
-            return UNIFIED_ASK_BID.getTrId(); // 통합 호가 TR: H0UNASP0
-        }
+    public static String getPresentTrId(LocalTime time) {
+        return time.isBefore(LocalTime.of(15, 30)) ? KRX_PRESENT.trId : UNIFIED_PRESENT.trId;
+    }
+
+    public static String getAskBidTrId(LocalTime time) {
+        return time.isBefore(LocalTime.of(15, 30)) ? KRX_ASK_BID.trId : UNIFIED_ASK_BID.trId;
     }
 
     /**

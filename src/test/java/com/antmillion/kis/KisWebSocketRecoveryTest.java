@@ -29,6 +29,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
+import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
@@ -99,6 +100,7 @@ public class KisWebSocketRecoveryTest {
     static class Manager extends KisWebSocketManager implements AutoCloseable {
         Timer timer;
         long now;
+        LocalTime market = LocalTime.of(10, 0);
         int approvals;
         int attempts;
         boolean failApproval;
@@ -113,6 +115,7 @@ public class KisWebSocketRecoveryTest {
         Manager(SimpMessagingTemplate template, TradingEngineService engine) { super(null, template, engine); }
         @Override protected ThreadPoolTaskScheduler createScheduler() { return timer = new Timer(); }
         @Override protected long nowMillis() { return now; }
+        @Override protected LocalTime marketTime() { return market; }
         @Override protected long handshakeTimeoutMillis() { return 2000; }
         @Override protected String requestApprovalKey() {
             approvals++;
@@ -945,6 +948,219 @@ public class KisWebSocketRecoveryTest {
             assertEquals(2, manager.attempts);
             assertTrue(manager.connection.open.get());
             assertEquals(2, manager.connection.messages.size());
+        }
+    }
+
+    @Test
+    public void marketBoundaryRotatesSharedPricesAndOrderQuotesOnceAndReturnsAtMidnight() {
+        try (Manager manager = new Manager()) {
+            manager.market = LocalTime.of(15, 29, 59);
+            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            manager.start();
+            registry.replaceOrderStocks(Set.of("005930"));
+            registry.connected(new SessionConnectEvent(this, frame(StompCommand.CONNECT, "screen", null, null)));
+            registry.subscribed(new SessionSubscribeEvent(this, frame(StompCommand.SUBSCRIBE, "screen", "price", "present005930")));
+            registry.subscribed(new SessionSubscribeEvent(this, frame(StompCommand.SUBSCRIBE, "screen", "book", "ask-bid005930")));
+            manager.tick();
+            Connection first = manager.connection;
+            assertEquals(2, first.messages.size());
+            assertTrue(first.messages.stream().allMatch(message -> message.contains("H0ST")));
+            manager.market = LocalTime.of(15, 30);
+            manager.tick();
+            assertFalse(first.open.get());
+            assertEquals(2, manager.attempts);
+            assertEquals(2, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.stream().allMatch(message -> message.contains("H0UN")));
+            manager.tick();
+            registry.replaceOrderStocks(Set.of("005930"));
+            assertEquals(2, manager.attempts);
+            registry.disconnected(new SessionDisconnectEvent(this, frame(StompCommand.DISCONNECT, "screen", null, null),
+                    "screen", CloseStatus.NORMAL));
+            manager.tick();
+            Connection evening = manager.connection;
+            manager.market = LocalTime.of(23, 59, 59);
+            manager.tick();
+            assertSame(evening, manager.connection);
+            manager.market = LocalTime.MIDNIGHT;
+            manager.tick();
+            assertFalse(evening.open.get());
+            assertEquals(3, manager.attempts);
+            assertEquals(1, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.get(0).contains("H0STASP0"));
+            registry.replaceOrderStocks(Set.of());
+            manager.tick();
+            assertFalse(manager.connection.open.get());
+        }
+    }
+
+    @Test
+    public void marketRotationDropsOldCallbacksAndDoesNotReviveReleasedQuotes() throws Exception {
+        try (Manager manager = new Manager()) {
+            manager.start();
+            manager.subscribeCurrentMarket("005930", false);
+            manager.tick();
+            Connection old = manager.connection;
+            KisWebSocketHandler oldHandler = manager.handler;
+            manager.market = LocalTime.of(15, 30);
+            manager.tick();
+            Connection current = manager.connection;
+            Manager.response(oldHandler, old, "005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+            Manager.receive(oldHandler, old, "0|H0STASP0|001|invalid-old-frame");
+            oldHandler.afterConnectionClosed(old.session, CloseStatus.NORMAL);
+            assertTrue(current.open.get());
+            assertFalse(manager.messageReceived(old.session));
+            assertTrue(manager.isCurrentSession(current.session));
+            manager.unsubscribeCurrentMarket("005930", false);
+            manager.tick();
+            assertFalse(current.open.get());
+            manager.market = LocalTime.MIDNIGHT;
+            manager.advance(60000);
+            assertEquals(2, manager.attempts);
+        }
+    }
+
+    @Test
+    public void marketRotationPreservesRejectionAndExhaustedAckBudget() {
+        for (boolean rejected : new boolean[]{true, false}) {
+            try (Manager manager = new Manager()) {
+                manager.autoAcknowledge = false;
+                manager.start();
+                manager.subscribeCurrentMarket("005930", false);
+                manager.subscribeCurrentMarket("000660", false);
+                manager.tick();
+                manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                if (rejected) {
+                    manager.response("005930", "H0STASP0", "1", "SYNTHETIC REJECTION");
+                } else {
+                    for (int attempt = 1; attempt <= 3; attempt++) {
+                        manager.advance(5000);
+                        if (attempt != 3) {
+                            manager.advance(attempt * 1000L);
+                            manager.response("000660", "H0STASP0", "0", "SUBSCRIBE SUCCESS");
+                        }
+                    }
+                }
+                manager.autoAcknowledge = true;
+                manager.market = LocalTime.of(15, 30);
+                manager.advance(1000);
+                assertEquals(1, manager.connection.messages.size());
+                assertTrue(manager.connection.messages.get(0).contains("000660"));
+                assertTrue(manager.connection.messages.get(0).contains("H0UNASP0"));
+                manager.market = LocalTime.MIDNIGHT;
+                manager.tick();
+                assertEquals(1, manager.connection.messages.size());
+                assertTrue(manager.connection.messages.get(0).contains("000660"));
+                manager.unsubscribeCurrentMarket("005930", false);
+                manager.subscribeCurrentMarket("005930", false);
+                manager.tick();
+                assertEquals(2, manager.connection.messages.size());
+            }
+        }
+    }
+
+    @Test
+    public void marketRotationKeepsAckRetryCountAndExistingBackoff() {
+        try (Manager manager = new Manager()) {
+            manager.autoAcknowledge = false;
+            manager.start();
+            manager.subscribeCurrentMarket("005930", false);
+            manager.tick();
+            manager.advance(5000);
+            manager.market = LocalTime.of(15, 30);
+            manager.advance(999);
+            assertEquals(1, manager.attempts);
+            manager.advance(1);
+            assertTrue(manager.connection.messages.get(0).contains("H0UNASP0"));
+            manager.advance(5000);
+            manager.market = LocalTime.MIDNIGHT;
+            manager.advance(1999);
+            assertEquals(2, manager.attempts);
+            manager.advance(1);
+            assertTrue(manager.connection.messages.get(0).contains("H0STASP0"));
+            manager.advance(5000);
+            manager.advance(60000);
+            assertEquals("Market changes must not create another ACK retry budget", 3, manager.attempts);
+        }
+    }
+
+    @Test
+    public void marketChangeDuringHandshakeNeverSendsPreviousTrAndHonorsRelease() throws Exception {
+        for (boolean release : new boolean[]{false, true}) {
+            try (Manager manager = new Manager()) {
+                manager.pending = true;
+                manager.start();
+                manager.subscribeCurrentMarket("005930", false);
+                ExecutorService executor = Executors.newSingleThreadExecutor();
+                try {
+                    Future<?> opening = executor.submit(manager::tick);
+                    assertTrue(manager.connecting.await(2, TimeUnit.SECONDS));
+                    manager.market = LocalTime.of(15, 30);
+                    if (release) manager.unsubscribeCurrentMarket("005930", false);
+                    Connection late = new Connection();
+                    manager.establish(late);
+                    opening.get(3, TimeUnit.SECONDS);
+                    assertTrue(late.messages.isEmpty());
+                    assertFalse(late.open.get());
+                    manager.pending = false;
+                    manager.tick();
+                    if (release) {
+                        assertEquals(1, manager.attempts);
+                    } else {
+                        assertEquals(2, manager.attempts);
+                        assertEquals(1, manager.connection.messages.size());
+                        assertTrue(manager.connection.messages.get(0).contains("H0UNASP0"));
+                    }
+                } finally { executor.shutdownNow(); }
+            }
+        }
+    }
+
+    @Test
+    public void releasedAndNewSharedOwnersDuringOutageRestoreOnlyLatestMarketReferences() {
+        try (Manager manager = new Manager()) {
+            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            manager.start();
+            registry.replaceOrderStocks(Set.of("005930", "000660"));
+            manager.tick();
+            manager.connectionLost(manager.connection.session);
+            manager.market = LocalTime.of(15, 30);
+            registry.replaceOrderStocks(Set.of("000660", "035420"));
+            manager.advance(999);
+            assertEquals(1, manager.attempts);
+            manager.advance(1);
+            assertEquals(2, manager.connection.messages.size());
+            assertTrue(manager.connection.messages.stream().allMatch(message -> message.contains("H0UNASP0")
+                    && !message.contains("005930")));
+            registry.replaceOrderStocks(Set.of());
+            manager.tick();
+            manager.market = LocalTime.MIDNIGHT;
+            manager.advance(60000);
+            assertEquals(2, manager.attempts);
+        }
+    }
+
+    @Test
+    public void previousWorkerCannotRotateAfterStopOrTouchRestartedConnection() {
+        try (Manager manager = new Manager()) {
+            manager.start();
+            manager.subscribeCurrentMarket("005930", false);
+            manager.tick();
+            Runnable previousWorker = manager.timer.task;
+            manager.stop();
+            manager.market = LocalTime.of(15, 30);
+            previousWorker.run();
+            assertEquals(1, manager.attempts);
+            manager.start();
+            manager.tick();
+            assertTrue(manager.connection.messages.get(0).contains("H0UNASP0"));
+            Connection current = manager.connection;
+            manager.market = LocalTime.MIDNIGHT;
+            previousWorker.run();
+            assertSame(current, manager.connection);
+            assertTrue(current.open.get());
+            manager.tick();
+            assertFalse(current.open.get());
+            assertEquals(3, manager.attempts);
         }
     }
 
