@@ -131,3 +131,16 @@ node --test scripts/tests/order-price.test.cjs
 실제 주문 UI 코드를 DOM·시세 변경·HTTP 대역에서 실행하여 매수/매도 지정가 유지,
 시장가 갱신·유형 전환·늦은 최초 시세와 주문 확인/전송 가격을 확인합니다.
 실제 서버·브라우저·DB·증권사에는 연결하지 않습니다.
+
+현재가 Provider 계약과 관심종목 HTTP 응답은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisCurrentPriceProviderTest,InterestControllerTest' test
+```
+
+국내 KRX 단건·목록 조회, 기존 KIS 요청·정수/상세 캐시·10초 TTL·제한 초과 처리,
+부분 실패·가격 문자열·관심종목 URL/JSON·비로그인 빈 목록을 확인합니다.
+실제 KisApiService와 limiter에 HTTP·메모리 Redis 대역만 연결하며,
+실제 설정·Redis·증권사·DB·전체 앱 context는 로드하지 않습니다.
+`Test-Trading.ps1`에도 포함되며, 마이페이지의 비활성 종목·평가 불가·정상 평가 회귀는
+공통 Provider 대역과 실제 Mapper·일회성 DB로 함께 검증합니다.
