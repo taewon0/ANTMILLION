@@ -571,26 +571,6 @@ public class KisApiService {
                 .build().toUriString();
     }
 
-	public FrgnOrgnTrafficSignal getTrafficSignal(String stockCode) {
-		ForeignerOrganization data = getForeignerOrganizationData(stockCode);
-		if(data.getForeignNetQty()==null || data.getOrganizationNetQty() ==null) {
-			return new FrgnOrgnTrafficSignal();
-		}
-		long fqty = Long.parseLong(data.getForeignNetQty());
-		long oqty = Long.parseLong(data.getOrganizationNetQty());
-		
-		String color;
-	    if (fqty > 0 && oqty > 0) {
-	        color = "GREEN"; // 동반 매수
-	    } else if (fqty < 0 && oqty < 0) {
-	        color = "RED";   // 동반 매도
-	    } else {
-	        color = "YELLOW"; // 혼조세
-	    }
-	    
-	    return new FrgnOrgnTrafficSignal(color);
-	}
-    
     public CurrentPrice getCurrentPriceDetail(CurrentPriceRequest request) {
         String cacheKey = "current:price:detail:" + request.getStockCode();
 

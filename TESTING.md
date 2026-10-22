@@ -171,3 +171,17 @@ node --test scripts/tests/minute-chart.test.cjs scripts/tests/period-chart.test.
 개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
 일별 분봉 캐시가 요청 일자 대신 서버 오늘 날짜를 쓰는 기존 한계와 두 경로의 시간대 정책은 유지합니다.
 Java 회귀는 `Test-Trading.ps1`에도 포함되며, JS는 메인·상세 화면의 실제 분봉 소비 함수를 대역에서 검증합니다.
+
+외국인·기관 가집계 Provider와 신호등 HTTP/화면 호환성은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisInvestorFlowProviderTest,KisInvestorSignalControllerTest' test
+node --test scripts/tests/investor-signal.test.cjs
+```
+
+원본 가집계 문자열·첫 행 선택·종목별 600초 캐시·공유 호출 제한과 기존 URL/JSON,
+동반 매수/매도·혼조/0·누락 값·숫자 변환 오류·429 응답을 확인합니다.
+실제 서비스·repository·limiter는 HTTP·메모리 Redis 대역만 사용하며,
+공통 신호등 서비스·독립 MVC와 세 화면의 실제 JS 함수를 대역에서 검증합니다.
+개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
+Java 회귀는 `Test-Trading.ps1`에도 포함됩니다.

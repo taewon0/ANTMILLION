@@ -1,8 +1,7 @@
 package com.antmillion.kis.controller;
 
-import com.antmillion.kis.dto.*;
 import com.antmillion.kis.manager.KisWebSocketManager;
-import com.antmillion.kis.service.KisApiService;
+import com.antmillion.marketdata.service.InvestorSignalService;
 import com.antmillion.marketdata.dto.MarketIndexChartRequest;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
@@ -17,6 +16,7 @@ import com.antmillion.stock.dto.MarketIndexChartResponseDTO;
 import com.antmillion.stock.dto.PeriodChartResponseDTO;
 import com.antmillion.stock.dto.RecentMinuteChartResponseDTO;
 import com.antmillion.stock.dto.StockRankingResponseDTO;
+import com.antmillion.stock.dto.InvestorSignalResponseDTO;
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.stereotype.Controller;
@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/kis")
 public class KisController {
 
-    private final KisApiService kisApiService;
+    private final InvestorSignalService investorSignalService;
     private final KisWebSocketManager kisWebSocketManager;
     private final PeriodChartProvider periodChartProvider;
     private final MinuteChartProvider minuteChartProvider;
@@ -155,8 +155,8 @@ public class KisController {
     }
     
     @GetMapping("/foreigner-organization/{stockCode}")
-    public FrgnOrgnTrafficSignal getForeignerOrganization(@PathVariable("stockCode") String stockCode) {
-    	return kisApiService.getTrafficSignal(stockCode);
+    public InvestorSignalResponseDTO getForeignerOrganization(@PathVariable("stockCode") String stockCode) {
+        return new InvestorSignalResponseDTO(investorSignalService.getSignalColor(stockCode));
     }
 
 }
