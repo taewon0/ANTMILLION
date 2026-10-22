@@ -61,6 +61,8 @@ public class KisMinuteChartProviderTest {
     private KisApiService legacy;
     private MinuteChartProvider provider;
     private RateLimitedKisApiClient limiter;
+    private KisChartRedisRepository charts;
+    private String baseUrl;
 
     @Before
     public void setUp() {
@@ -68,14 +70,16 @@ public class KisMinuteChartProviderTest {
         redis.values.put("kis:access_token", "synthetic-token");
         RestTemplate rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
+        baseUrl = "https://kis.test";
         KisConfig config = new KisConfig() {
-            @Override public String getBaseUrl() { return "https://kis.test"; }
+            @Override public String getBaseUrl() { return baseUrl; }
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
         limiter = new RateLimitedKisApiClient(redis);
+        charts = new KisChartRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
-                new KisChartRedisRepository(redis, new ObjectMapper()), null, null, null, null, limiter);
+                charts, null, null, null, null, limiter);
         provider = new KisMinuteChartProvider(legacy);
     }
 
@@ -108,14 +112,117 @@ public class KisMinuteChartProviderTest {
     }
 
     @Test
-    public void dailyCacheRetainsExistingServerDateKeyInsteadOfRequestDate() {
-        useFixedBudget(1);
+    public void differentRequestDatesDoNotReuseTheFirstDate() {
+        assertDatesRemainSeparated("20261021", "20261020");
+    }
+
+    @Test
+    public void reversedRequestDatesDoNotReuseTheFirstDate() {
+        assertDatesRemainSeparated("20261020", "20261021");
+    }
+
+    private void assertDatesRemainSeparated(String first, String second) {
+        useFixedBudget(2);
+        expectDailyDate(first, DAILY.replace("20261021", first));
+        expectDailyDate(second, DAILY.replace("20261021", second).replace("071000", "072000"));
+        MinuteChartRequest firstRequest = new MinuteChartRequest("005930", LocalDate.parse(first,
+                DateTimeFormatter.BASIC_ISO_DATE));
+        MinuteChartRequest secondRequest = new MinuteChartRequest("005930", LocalDate.parse(second,
+                DateTimeFormatter.BASIC_ISO_DATE));
+        assertEquals("071000", provider.getDailyMinutes(firstRequest).get(2).getClosePrice());
+        assertEquals("072000", provider.getDailyMinutes(secondRequest).get(2).getClosePrice());
+        assertEquals(second, provider.getDailyMinutes(secondRequest).get(2).getDate());
+        assertEquals(first, provider.getDailyMinutes(firstRequest).get(2).getDate());
+        assertEquals(2, redis.ttls.size());
+        assertEquals(0, limiter.getAvailableTokens());
+        server.verify();
+    }
+
+    private void expectDailyDate(String date, String json) {
+        server.expect(req -> assertDailyUrl(req.getURI().toString(), "J", "153000", "N", "", date))
+                .andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    public void allSixQueryConditionsHaveIndependentCachesAndReuseTheirOwnRows() {
+        List<StreamMinutePriceRequest> requests = List.of(dailyRequest(),
+                dailyRequest("NX", "005930", "153000", "20261021", "N", ""),
+                dailyRequest("J", "000660", "153000", "20261021", "N", ""),
+                dailyRequest("J", "005930", "130000", "20261021", "N", ""),
+                dailyRequest("J", "005930", "153000", "20261020", "N", ""),
+                dailyRequest("J", "005930", "153000", "20261021", "Y", ""),
+                dailyRequest("J", "005930", "153000", "20261021", "N", "Y"));
+        useFixedBudget(requests.size());
+        for (int i = 0; i < requests.size(); i++) {
+            StreamMinutePriceRequest request = requests.get(i);
+            String json = DAILY.replace("071000", String.valueOf(71000 + i));
+            expectDailyRequest(request, json);
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            assertEquals(String.valueOf(71000 + i), legacy.getStreamMinutePrices(requests.get(i)).get(2).getStckPrpr());
+        }
+        for (int i = requests.size() - 1; i >= 0; i--) {
+            assertEquals(String.valueOf(71000 + i), legacy.getStreamMinutePrices(requests.get(i)).get(2).getStckPrpr());
+            assertEquals(Long.valueOf(60), redis.ttls.get(cacheKey(baseUrl, requests.get(i))));
+        }
+        assertEquals(requests.size(), redis.ttls.size());
+        assertEquals(0, limiter.getAvailableTokens());
+        server.verify();
+    }
+
+    @Test
+    public void effectiveEndpointSeparatesEnvironmentsAndReusesEachCache() {
+        useFixedBudget(2);
         expectDaily(DAILY);
-        provider.getDailyMinutes(request());
-        // 날짜·조회 조건 차원이 불완전한 기존 키 정책은 이 경계 분리에서 바꾸지 않습니다.
-        assertEquals(3, provider.getDailyMinutes(new MinuteChartRequest("005930",
-                request().getDate().minusDays(1))).size());
+        baseUrl = "https://virtual.kis.test";
+        expectDaily(DAILY.replace("071000", "072000"));
+        baseUrl = "https://kis.test";
+        assertEquals("071000", provider.getDailyMinutes(request()).get(2).getClosePrice());
+        baseUrl = "https://virtual.kis.test";
+        assertEquals("072000", provider.getDailyMinutes(request()).get(2).getClosePrice());
+        baseUrl = "https://kis.test";
+        assertEquals("071000", provider.getDailyMinutes(request()).get(2).getClosePrice());
+        baseUrl = "https://virtual.kis.test";
+        assertEquals("072000", provider.getDailyMinutes(request()).get(2).getClosePrice());
+        assertEquals(2, redis.ttls.size());
+        assertEquals(0, limiter.getAvailableTokens());
+        server.verify();
+    }
+
+    @Test
+    public void legacyAndOtherProviderKeysAreIgnoredAndLeftToExpire() {
+        List<Map<String, String>> obsolete = List.of(Map.of("stck_prpr", "obsolete"));
+        String oldKey = "stream:minute:" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + ":005930";
+        String otherKey = cacheKey().replaceFirst("kis:", "kiwoom:");
+        redis.values.put(oldKey, obsolete);
+        redis.values.put(otherKey, obsolete);
+        expectDaily(DAILY);
+        assertEquals("071000", provider.getDailyMinutes(request()).get(2).getClosePrice());
+        assertEquals(obsolete, redis.values.get(oldKey));
+        assertEquals(obsolete, redis.values.get(otherKey));
         assertEquals(1, redis.ttls.size());
+        assertEquals(Long.valueOf(60), redis.ttls.get(cacheKey()));
+        server.verify();
+    }
+
+    @Test
+    public void delimitersNullAndEmptyComponentsCannotAliasInRepositoryKeys() {
+        List<StreamMinutePriceRequest> requests = List.of(
+                dailyRequest("A:B", "C", "153000", "20261021", "N", ""),
+                dailyRequest("A", "B:C", "153000", "20261021", "N", ""),
+                dailyRequest(null, "005930", "153000", "20261021", "N", ""),
+                dailyRequest("", "005930", "153000", "20261021", "N", ""),
+                dailyRequest("null", "005930", "153000", "20261021", "N", ""));
+        for (int i = 0; i < requests.size(); i++) {
+            StreamMinutePrice price = new StreamMinutePrice();
+            price.setStckPrpr(String.valueOf(i));
+            charts.saveStreamMinute(baseUrl, requests.get(i), List.of(price));
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            assertEquals(String.valueOf(i), charts.getStreamMinuteChartData(baseUrl, requests.get(i))
+                    .get().get(0).getStckPrpr());
+        }
+        assertEquals(requests.size(), redis.ttls.size());
         server.verify();
     }
 
@@ -223,15 +330,44 @@ public class KisMinuteChartProviderTest {
     }
 
     private String cacheKey() {
-        return "stream:minute:" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + ":005930";
+        return cacheKey(baseUrl, dailyRequest());
     }
 
-    private void expectDaily(String json) {
+    private String cacheKey(String endpoint, StreamMinutePriceRequest request) {
+        StringBuilder key = new StringBuilder("kis:chart:stream-minute:v2");
+        for (String value : new String[]{endpoint, request.getCondMrktDivCode(), request.getInputIscd(),
+                request.getInputHour1(), request.getInputDate1(), request.getPwDataIncuYn(), request.getFakeTickIncuYn()}) {
+            key.append(':').append(value == null ? -1 : value.length()).append(':');
+            if (value != null) key.append(value);
+        }
+        return key.toString();
+    }
+
+    private StreamMinutePriceRequest dailyRequest() {
+        return dailyRequest("J", "005930", "153000", "20261021", "N", "");
+    }
+
+    private StreamMinutePriceRequest dailyRequest(String market, String stock, String time, String date,
+                                                String past, String fake) {
+        return StreamMinutePriceRequest.builder().condMrktDivCode(market).inputIscd(stock).inputHour1(time)
+                .inputDate1(date).pwDataIncuYn(past).fakeTickIncuYn(fake).build();
+    }
+
+    private void expectDailyRequest(StreamMinutePriceRequest request, String json) {
+        String endpoint = baseUrl;
         server.expect(req -> {
-            assertDailyUrl(req.getURI().toString(), "J", "153000", "N", "", "20261021");
+            assertEquals(endpoint + "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+                    + "?FID_COND_MRKT_DIV_CODE=" + request.getCondMrktDivCode()
+                    + "&FID_INPUT_ISCD=" + request.getInputIscd() + "&FID_INPUT_HOUR_1=" + request.getInputHour1()
+                    + "&FID_INPUT_DATE_1=" + request.getInputDate1() + "&FID_PW_DATA_INCU_YN=" + request.getPwDataIncuYn()
+                    + "&FID_FAKE_TICK_INCU_YN=" + request.getFakeTickIncuYn(), req.getURI().toString());
             assertHeaders(req.getMethod(), req.getHeaders(), "FHKST03010230");
             assertEquals("N", req.getHeaders().getFirst("tr_cont"));
         }).andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
+    }
+
+    private void expectDaily(String json) {
+        expectDailyRequest(dailyRequest(), json);
     }
 
     private void expectRecent(String json, LocalTime before) {
@@ -272,8 +408,9 @@ public class KisMinuteChartProviderTest {
     }
 
     private void useFixedBudget(int remaining) {
-        Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(1)
-                .refillIntervally(1, Duration.ofDays(1)).build()).build();
+        int capacity = Math.max(1, remaining);
+        Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(capacity)
+                .refillIntervally(capacity, Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
         ReflectionTestUtils.setField(limiter, "bucket", budget);
     }

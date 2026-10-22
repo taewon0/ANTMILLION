@@ -3,6 +3,7 @@ package com.antmillion.kis.repository;
 import com.antmillion.kis.dto.ChartStockPrice;
 import com.antmillion.kis.dto.ChartStockPriceRequest;
 import com.antmillion.kis.dto.StreamMinutePrice;
+import com.antmillion.kis.dto.StreamMinutePriceRequest;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 public class KisChartRedisRepository {
 
     private static final String KIS_PERIOD_CHART_KEY = "kis:chart:period:v2";
-    private static final String KIS_STREAM_MINUTE_CHART_KEY = "stream:minute";
+    private static final String KIS_STREAM_MINUTE_CHART_KEY = "kis:chart:stream-minute:v2";
     private static final long CACHE_EXPIRE_HOURS = 24; // 24시간 캐시 유지
     private static final long CACHE_EXPIRE_MINUTE = 1; // 1분
 
@@ -75,16 +76,16 @@ public class KisChartRedisRepository {
     /**
      * Redis에 일별 분봉 데이터 저장
      */
-    public void saveStreamMinute(String stockCode, String today, List<StreamMinutePrice> streamData) {
-    	String key = buildStreamMinuteKey(stockCode, today);
+    public void saveStreamMinute(String baseUrl, StreamMinutePriceRequest request, List<StreamMinutePrice> streamData) {
+        String key = buildStreamMinuteKey(baseUrl, request);
         redisTemplate.opsForValue().set(key, streamData, CACHE_EXPIRE_MINUTE, TimeUnit.MINUTES); // TTL 1분
     }
     
     /**
      * 일별 분봉 데이터 조회
      */
-    public Optional<List<StreamMinutePrice>> getStreamMinuteChartData(String stockCode, String today) {
-        String key = buildStreamMinuteKey(stockCode, today);
+    public Optional<List<StreamMinutePrice>> getStreamMinuteChartData(String baseUrl, StreamMinutePriceRequest request) {
+        String key = buildStreamMinuteKey(baseUrl, request);
         Object data = redisTemplate.opsForValue().get(key);
 
         if (data == null) return Optional.empty();
@@ -101,10 +102,17 @@ public class KisChartRedisRepository {
     }
     
     /**
-     * Redis에 저장할 일별 분봉 키 생성 
+     * Provider·실제 요청 환경·모든 조회 조건을 구분하고 기존 키는 재사용하지 않습니다.
      */
-    private String buildStreamMinuteKey(String stockCode, String today) {
-        return String.format("%s:%s:%s", KIS_STREAM_MINUTE_CHART_KEY, today, stockCode);
+    private String buildStreamMinuteKey(String baseUrl, StreamMinutePriceRequest request) {
+        StringBuilder key = new StringBuilder(KIS_STREAM_MINUTE_CHART_KEY);
+        for (String value : new String[]{baseUrl, request.getCondMrktDivCode(), request.getInputIscd(),
+                request.getInputHour1(), request.getInputDate1(), request.getPwDataIncuYn(), request.getFakeTickIncuYn()}) {
+            // 길이를 함께 저장해 구분자가 포함된 값과 null/빈 문자열도 서로 섞이지 않게 합니다.
+            key.append(':').append(value == null ? -1 : value.length()).append(':');
+            if (value != null) key.append(value);
+        }
+        return key.toString();
     }
 
 }
