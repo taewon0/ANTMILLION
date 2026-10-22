@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
 import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPrice;
 import com.antmillion.kis.dto.CurrentPriceRequest;
@@ -19,7 +20,6 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -61,7 +61,9 @@ public class KisCurrentPriceProviderTest {
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
-        limiter = new RateLimitedKisApiClient(redis);
+        config.accountNo = "synthetic-account";
+        config.acntPrdtCd = "01";
+        limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
                 null, null, null, null, null, limiter);
         provider = new KisCurrentPriceProvider(legacy);
@@ -218,7 +220,7 @@ public class KisCurrentPriceProviderTest {
         if (changeEndpoint) baseUrl = "https://virtual.kis.test";
         assertEquals("72000", loadPrice(detail, "005930", secondMarket));
         assertTrue(redis.ttls.isEmpty());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -355,7 +357,7 @@ public class KisCurrentPriceProviderTest {
         Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(1)
                 .refillIntervally(1, Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
-        ReflectionTestUtils.setField(limiter, "bucket", budget);
+        KisRateLimitTestSupport.fixedCacheBudget(limiter, budget);
     }
 
     private static class MemoryRedis extends RedisTemplate<String, Object> {

@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
 import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.ChartStockPrice;
 import com.antmillion.kis.dto.ChartStockPriceRequest;
@@ -25,7 +26,6 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -71,7 +71,9 @@ public class KisPeriodChartProviderTest {
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
-        limiter = new RateLimitedKisApiClient(redis);
+        config.accountNo = "synthetic-account";
+        config.acntPrdtCd = "01";
+        limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         charts = new KisChartRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
                 charts, null, null, null, null, limiter);
@@ -102,7 +104,7 @@ public class KisPeriodChartProviderTest {
         assertEquals(List.of(new PeriodCandle("20261021", "00100", null, null, null),
                 new PeriodCandle("20261020", "", null, null, null)), provider.getPeriodChart(request("D")));
         assertTrue(redis.ttls.isEmpty());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -140,7 +142,7 @@ public class KisPeriodChartProviderTest {
         }
         assertEquals(3, redis.ttls.size());
         assertTrue(redis.ttls.values().stream().allMatch(ttl -> ttl == 86400));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -180,7 +182,7 @@ public class KisPeriodChartProviderTest {
         baseUrl = "https://virtual.kis.test";
         assertEquals("072000", provider.getPeriodChart(request("D")).get(0).getClosePrice());
         assertEquals(2, redis.ttls.size());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -345,7 +347,7 @@ public class KisPeriodChartProviderTest {
         Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(Math.max(1, remaining))
                 .refillIntervally(1, Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
-        ReflectionTestUtils.setField(limiter, "bucket", budget);
+        KisRateLimitTestSupport.fixedCacheBudget(limiter, budget);
     }
 
     private static class MemoryRedis extends RedisTemplate<String, Object> {

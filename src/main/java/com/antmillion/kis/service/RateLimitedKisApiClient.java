@@ -1,43 +1,61 @@
 package com.antmillion.kis.service;
 
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
+import com.antmillion.kis.dto.KisRestRequestScope;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
-import lombok.RequiredArgsConstructor;
+import io.github.bucket4j.TimeMeter;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
 @Slf4j
 @Component
 public class RateLimitedKisApiClient {
     private final RedisTemplate<String, Object> redisTemplate;
-    private final Bucket bucket;
+    private final KisRestRateLimitConfig limits;
+    private final TimeMeter timeMeter;
+    // JVM 내에서 같은 환경·계좌의 시세 REST 예산을 공유합니다. 자동 퇴거로 예산을 재생성하지 않습니다.
+    private final ConcurrentMap<String, Bucket> buckets = new ConcurrentHashMap<>();
 
-    // 20 tokens, 1초마다 refill
-    public RateLimitedKisApiClient(RedisTemplate<String, Object> redisTemplate) {
-        this.redisTemplate = redisTemplate;
-
-        // 1초당 20건 제한 설정
-        Bandwidth limit = Bandwidth.builder()
-                .capacity(20) // 버킷 용량
-                .refillGreedy(20, Duration.ofSeconds(1)) // 1초마다 20개 즉시 리필
-                .build();
-        this.bucket = Bucket.builder()
-                .addLimit(limit)
-                .build();
-
-        log.info("RateLimitedKisApiClient 초기화: 1초당 20건 제한");
+    @Autowired
+    public RateLimitedKisApiClient(RedisTemplate<String, Object> redisTemplate, KisConfig config,
+                                   KisRestRateLimitConfig limits) {
+        this(redisTemplate, config, limits, TimeMeter.SYSTEM_NANOTIME);
     }
 
+    RateLimitedKisApiClient(RedisTemplate<String, Object> redisTemplate, KisConfig config,
+                            KisRestRateLimitConfig limits, TimeMeter timeMeter) {
+        this.redisTemplate = redisTemplate;
+        this.limits = limits;
+        this.timeMeter = timeMeter;
+        // 누락된 계좌 설정은 첫 외부 요청 이전, bean 생성 시 거부합니다.
+        new KisRestRequestScope(config.getBaseUrl(), config.accountNo, config.acntPrdtCd,
+                config.appKey, config.appSecret);
+    }
+
+    private Bucket bucket(KisRestRequestScope scope) {
+        return buckets.computeIfAbsent(scope.getBudgetKey(), key -> {
+            int perSecond = limits.tokensPerSecond(scope.getBaseUrl());
+            Bandwidth limit = Bandwidth.builder().capacity(perSecond)
+                    .refillGreedy(perSecond, Duration.ofSeconds(1)).build();
+            return Bucket.builder().withCustomTimePrecision(timeMeter).addLimit(limit).build();
+        });
+    }
 
     // Rate Limit이 적용된 API 호출 (Redis 캐싱 O)
-    public <T> T callWithCache(String cacheKey, Supplier<T> apiCall, long ttl) {
+    public <T> T callWithCache(KisRestRequestScope scope, String cacheKey, Supplier<T> apiCall, long ttl) {
+        Bucket bucket = bucket(scope);
         // 토큰 소비 시도
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
 
@@ -105,7 +123,8 @@ public class RateLimitedKisApiClient {
     }
 
     // Rate Limit이 적용된 API 호출 (Redis 캐싱 X)
-    public <T> T callWithoutCache(Supplier<T> apiCall) {
+    public <T> T callWithoutCache(KisRestRequestScope scope, Supplier<T> apiCall) {
+        Bucket bucket = bucket(scope);
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
 
         if (probe.isConsumed()) {
@@ -120,8 +139,8 @@ public class RateLimitedKisApiClient {
     }
 
     // 남은 토큰 수 조회 - 모니터링용
-    public long getAvailableTokens() {
-        return bucket.getAvailableTokens();
+    public long getAvailableTokens(KisRestRequestScope scope) {
+        return bucket(scope).getAvailableTokens();
     }
 
 }

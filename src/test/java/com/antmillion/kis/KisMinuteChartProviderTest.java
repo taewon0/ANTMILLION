@@ -2,6 +2,7 @@ package com.antmillion.kis;
 
 import com.antmillion.config.GlobalExceptionHandler;
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
 import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.controller.KisController;
 import com.antmillion.kis.dto.CurrentPriceRequest;
@@ -30,7 +31,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.client.HttpServerErrorException;
@@ -86,7 +86,9 @@ public class KisMinuteChartProviderTest {
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
-        limiter = new RateLimitedKisApiClient(redis);
+        config.accountNo = "synthetic-account";
+        config.acntPrdtCd = "01";
+        limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         charts = new KisChartRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
                 charts, null, null, null, null, limiter);
@@ -116,7 +118,7 @@ public class KisMinuteChartProviderTest {
                 Map.of("stck_cntg_hour", "152900", "stck_prpr", "")));
         assertEquals(List.of(new MinuteCandle(null, "153000", "00100", null, null, null),
                 new MinuteCandle(null, "152900", "", null, null, null)), provider.getDailyMinutes(request()));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
@@ -144,7 +146,7 @@ public class KisMinuteChartProviderTest {
         assertEquals(second, provider.getDailyMinutes(secondRequest).get(2).getDate());
         assertEquals(first, provider.getDailyMinutes(firstRequest).get(2).getDate());
         assertEquals(2, redis.ttls.size());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -176,7 +178,7 @@ public class KisMinuteChartProviderTest {
             assertEquals(Long.valueOf(60), redis.ttls.get(cacheKey(baseUrl, requests.get(i))));
         }
         assertEquals(requests.size(), redis.ttls.size());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -195,7 +197,7 @@ public class KisMinuteChartProviderTest {
         baseUrl = "https://virtual.kis.test";
         assertEquals("072000", provider.getDailyMinutes(request()).get(2).getClosePrice());
         assertEquals(2, redis.ttls.size());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -285,9 +287,9 @@ public class KisMinuteChartProviderTest {
                 new RecentMinuteCandle("153000", 71000, 70000, 72000, 69000),
                 new RecentMinuteCandle("152900", 0, 0, 0, 0), null);
         assertEquals(expected, provider.getRecentMinutes("005930"));
-        assertEquals(1, limiter.getAvailableTokens());
+        assertEquals(1, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertEquals(expected, provider.getRecentMinutes("005930"));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
@@ -307,7 +309,7 @@ public class KisMinuteChartProviderTest {
         useFixedBudget(1);
         expectRecent(RECENT, LocalTime.now().withNano(0));
         provider.getRecentMinutes("005930");
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertThrows(RateLimitExceededException.class, () -> legacy.getCurrentPrice(
                 CurrentPriceRequest.builder().stockCode("000660").marketCode("J").build()));
         assertThrows(RateLimitExceededException.class, () -> provider.getDailyMinutes(request()));
@@ -347,7 +349,7 @@ public class KisMinuteChartProviderTest {
         assertNull(provider.getRecentMinutes("005930"));
         assertEquals(List.of(), provider.getRecentMinutes("005930"));
         assertThrows(RuntimeException.class, () -> provider.getRecentMinutes("005930"));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
@@ -361,9 +363,9 @@ public class KisMinuteChartProviderTest {
         server.expect(req -> assertRecentUrl(req.getURI().toString(), before))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         assertThrows(HttpServerErrorException.class, () -> provider.getDailyMinutes(request()));
-        assertEquals(1, limiter.getAvailableTokens());
+        assertEquals(1, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertThrows(HttpServerErrorException.class, () -> provider.getRecentMinutes("005930"));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertThrows(RateLimitExceededException.class, () -> provider.getRecentMinutes("005930"));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
@@ -472,7 +474,7 @@ public class KisMinuteChartProviderTest {
         Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(capacity)
                 .refillIntervally(capacity, Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
-        ReflectionTestUtils.setField(limiter, "bucket", budget);
+        KisRateLimitTestSupport.fixedCacheBudget(limiter, budget);
     }
 
     private static class MemoryRedis extends RedisTemplate<String, Object> {
