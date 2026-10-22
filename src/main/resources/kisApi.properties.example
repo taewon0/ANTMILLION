@@ -5,6 +5,10 @@ kis.account-no=00000000
 kis.acnt-prdt-cd=0000000000
 kis.mode=real
 
+# WS approval와 연결 주소도 kis.mode를 사용합니다. 환경/키 변경은 재시작 후 적용합니다.
+# real: approval 9443 / WS 21000, virtual: approval 29443 / WS 31000
+# 모의도 기존 15:30 통합·자정 KRX 전환을 유지합니다. 통합 TR의 모의 지원·실수신은 검증 필요입니다.
+
 # 현재 연결의 무수신 제한(ms)입니다. ACK 제한 5000ms보다 크게 설정합니다.
 kis.websocket.receive-timeout-millis=90000
 

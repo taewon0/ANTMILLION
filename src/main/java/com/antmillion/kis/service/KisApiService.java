@@ -143,8 +143,16 @@ public class KisApiService {
      * KIS 웹소켓 키 발급 요청
      */
     public String getKisApprovalKey() {
-    	KisWebSocketResponse response = issueWebSocketAPI();
-    	return response.getApprovalKey();
+        return getKisApprovalKey(webSocketConnectionScope());
+    }
+
+    public KisWebSocketConnectionScope webSocketConnectionScope() {
+        return kisWebSocketConfig.connectionScope();
+    }
+
+    public String getKisApprovalKey(KisWebSocketConnectionScope scope) {
+        KisWebSocketResponse response = issueWebSocketAPI(scope);
+        return response.getApprovalKey();
     }
     
     /**
@@ -152,19 +160,19 @@ public class KisApiService {
      * 24시간 유효, 세션 연결 시 초기 1회만 사용하기 때문에
      * 접속키 인증 후에는 세션 종료되지 않는 이상 접속키 신규 발급받지 않아도 365일 내내 웹소켓 데이터 수신 가능
      */
-    private KisWebSocketResponse issueWebSocketAPI() {
-    	String url = kisWebSocketConfig.getBaseUrl() + KisApiConstant.WEB_SOCKET_PATH;
-    	KisWebSocketRequest body = new KisWebSocketRequest();
-    	body.setAppkey(kisWebSocketConfig.appKey);
-    	body.setSecretkey(kisWebSocketConfig.secretKey);
+    private KisWebSocketResponse issueWebSocketAPI(KisWebSocketConnectionScope scope) {
+        String url = scope.getBaseUrl() + KisApiConstant.WEB_SOCKET_PATH;
+        KisWebSocketRequest body = new KisWebSocketRequest();
+        body.setAppkey(scope.getAppKey());
+        body.setSecretkey(scope.getAppSecret());
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON); // JSON 콘텐츠 유형과 UTF-8 인코딩
         HttpEntity<KisWebSocketRequest> request =
                 new HttpEntity<>(body, headers);
         ResponseEntity<KisWebSocketResponse> response = restTemplate.postForEntity(url, request, KisWebSocketResponse.class);
         if(response.getBody() != null) {
-        	log.info("### Approval Key 발급 성공: {}******** ###", response.getBody().getApprovalKey().substring(0, 8));
-    	}
+            log.info("KIS WebSocket approval 발급 성공");
+        }
         return response.getBody();
     }
     

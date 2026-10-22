@@ -2,6 +2,7 @@ package com.antmillion.marketdata;
 
 import com.antmillion.kis.config.KisRealtimeProviderConfig;
 import com.antmillion.kis.handler.KisWebSocketHandler;
+import com.antmillion.kis.dto.KisWebSocketConnectionScope;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.marketdata.config.RealtimeRoutingConfig;
@@ -282,11 +283,14 @@ public class RealtimeRoutingTest {
         }
         @Override public void subscribeCurrentMarket(String code, boolean present) { calls.add("+" + code + ":" + present); }
         @Override public void unsubscribeCurrentMarket(String code, boolean present) { calls.add("-" + code + ":" + present); }
-        @Override protected String requestApprovalKey() {
+        @Override protected KisWebSocketConnectionScope connectionScope() {
+            throw new AssertionError("Unexpected KIS connection settings request");
+        }
+        @Override protected String requestApprovalKey(KisWebSocketConnectionScope scope) {
             approvals++;
             throw new AssertionError("Unexpected KIS approval request");
         }
-        @Override protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler) {
+        @Override protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler, String webSocketUrl) {
             handshakes++;
             throw new AssertionError("Unexpected KIS handshake");
         }
