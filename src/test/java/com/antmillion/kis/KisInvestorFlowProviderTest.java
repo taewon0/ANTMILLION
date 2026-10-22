@@ -30,6 +30,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -39,7 +41,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /** 실제 서비스·캐시·limiter에 HTTP·메모리 Redis 대역과 합성 자격증명만 연결합니다. */
 public class KisInvestorFlowProviderTest {
-    private static final String KEY = "kis:frgnorgn-ntby000001";
+    private static final String KEY = "kis:frgnorgn-ntby:v2:16:https://kis.test:6:000001";
     private static final String FLOW = "{\"output2\":[{\"frgn_fake_ntby_qty\":\"+0012\","
             + "\"orgn_fake_ntby_qty\":\"-003\",\"sum_fake_ntby_qty\":\"0009\"},"
             + "{\"frgn_fake_ntby_qty\":\"999\"}]}";
@@ -48,6 +50,8 @@ public class KisInvestorFlowProviderTest {
     private KisApiService legacy;
     private InvestorFlowProvider provider;
     private RateLimitedKisApiClient limiter;
+    private String baseUrl = "https://kis.test";
+    private int baseUrlReads;
 
     @Before
     public void setUp() {
@@ -56,7 +60,7 @@ public class KisInvestorFlowProviderTest {
         RestTemplate rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
         KisConfig config = new KisConfig() {
-            @Override public String getBaseUrl() { return "https://kis.test"; }
+            @Override public String getBaseUrl() { baseUrlReads++; return baseUrl; }
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
@@ -178,9 +182,112 @@ public class KisInvestorFlowProviderTest {
         server.verify();
     }
 
+    @Test
+    public void realThenVirtualDoesNotReuseAnotherEnvironment() {
+        assertEnvironmentIsolation("https://real.kis.test", "https://virtual.kis.test");
+    }
+
+    @Test
+    public void virtualThenRealDoesNotReuseAnotherEnvironment() {
+        assertEnvironmentIsolation("https://virtual.kis.test", "https://real.kis.test");
+    }
+
+    private void assertEnvironmentIsolation(String first, String second) {
+        useFixedBudget(2);
+        expectFlow(first, "000001", FLOW);
+        expectFlow(second, "000001", "{\"output2\":[{\"frgn_fake_ntby_qty\":\"-12\"}]}");
+        baseUrl = first;
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        baseUrl = second;
+        assertEquals("-12", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        baseUrl = first;
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        baseUrl = second;
+        assertEquals("-12", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(2, redis.ttls.size());
+        server.verify();
+    }
+
+    @Test
+    public void legacyAndOtherProviderKeysAreNotReadOrChanged() {
+        String legacyKey = "kis:frgnorgn-ntby000001";
+        String otherProviderKey = KEY.replace("kis:", "kiwoom:");
+        Map<String, String> stale = Map.of("frgn_fake_ntby_qty", "999");
+        redis.values.put(legacyKey, stale);
+        redis.values.put(otherProviderKey, stale);
+        useFixedBudget(1);
+        expectFlow("000001", FLOW);
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertFalse(redis.reads.contains(legacyKey));
+        assertFalse(redis.reads.contains(otherProviderKey));
+        assertSame(stale, redis.values.get(legacyKey));
+        assertSame(stale, redis.values.get(otherProviderKey));
+        assertEquals(1, redis.ttls.size());
+        assertEquals(Long.valueOf(600), redis.ttls.get(KEY));
+        server.verify();
+    }
+
+    @Test
+    public void depletedBudgetDoesNotFallBackToLegacyOrAnotherEnvironment() {
+        redis.values.put("kis:frgnorgn-ntby000001", Map.of("frgn_fake_ntby_qty", "999"));
+        useFixedBudget(1);
+        expectFlow("000001", FLOW);
+        provider.getInvestorFlow("000001");
+        baseUrl = "https://virtual.kis.test";
+        assertThrows(RateLimitExceededException.class, () -> provider.getInvestorFlow("000001"));
+        baseUrl = "https://kis.test";
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertEquals(1, redis.ttls.size());
+        assertFalse(redis.reads.contains("kis:frgnorgn-ntby000001"));
+        server.verify();
+    }
+
+    @Test
+    public void cacheAndHttpUseTheSameSingleEnvironmentSnapshot() {
+        // HTTP 대역 응답 중 환경이 바뀌어도 저장은 요청을 시작한 환경에 남습니다.
+        server.expect(request -> assertEquals(url("000001"), request.getURI().toString()))
+                .andRespond(request -> {
+                    baseUrl = "https://virtual.kis.test";
+                    return withSuccess(FLOW, MediaType.APPLICATION_JSON).createResponse(request);
+                });
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertEquals(1, baseUrlReads);
+        assertTrue(redis.values.containsKey(KEY));
+        baseUrl = "https://kis.test";
+        useFixedBudget(0);
+        assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
+        assertEquals(2, baseUrlReads);
+        assertEquals(1, redis.ttls.size());
+        server.verify();
+    }
+
+    @Test
+    public void delimitersNullAndEmptyConditionsDoNotCollide() {
+        KisFrgnOrgnRedisRepository repository = new KisFrgnOrgnRedisRepository(redis, new ObjectMapper());
+        String[][] conditions = {{"env:branch", "stock"}, {"env", "branch:stock"},
+                {null, ""}, {"", null}, {"", ""}, {null, null}, {"null", ""}};
+        for (int i = 0; i < conditions.length; i++) {
+            ForeignerOrganization data = new ForeignerOrganization();
+            data.setForeignNetQty(Integer.toString(i));
+            repository.save(conditions[i][0], conditions[i][1], data);
+        }
+        assertEquals(conditions.length, redis.ttls.size());
+        for (int i = 0; i < conditions.length; i++) {
+            assertEquals(Integer.toString(i), repository.getKisFrgnorgnNtby(conditions[i][0], conditions[i][1])
+                    .orElseThrow().getForeignNetQty());
+        }
+    }
+
     private void expectFlow(String stockCode, String json) {
+        expectFlow("https://kis.test", stockCode, json);
+    }
+
+    private void expectFlow(String environment, String stockCode, String json) {
         server.expect(request -> {
-            assertEquals(url(stockCode), request.getURI().toString());
+            assertEquals(environment + "/uapi/domestic-stock/v1/quotations/investor-trend-estimate?MKSC_SHRN_ISCD="
+                    + stockCode, request.getURI().toString());
             assertEquals(HttpMethod.GET, request.getMethod());
             assertEquals("Bearer synthetic-token", request.getHeaders().getFirst("Authorization"));
             assertEquals("synthetic-key", request.getHeaders().getFirst("appkey"));
@@ -195,8 +302,8 @@ public class KisInvestorFlowProviderTest {
     }
 
     private void useFixedBudget(int remaining) {
-        Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(1)
-                .refillIntervally(1, Duration.ofDays(1)).build()).build();
+        Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(Math.max(1, remaining))
+                .refillIntervally(Math.max(1, remaining), Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
         ReflectionTestUtils.setField(limiter, "bucket", budget);
     }
@@ -204,13 +311,17 @@ public class KisInvestorFlowProviderTest {
     private static class MemoryRedis extends RedisTemplate<String, Object> {
         final Map<String, Object> values = new ConcurrentHashMap<>();
         final Map<String, Long> ttls = new ConcurrentHashMap<>();
+        final List<String> reads = new ArrayList<>();
 
         @Override
         @SuppressWarnings("unchecked")
         public ValueOperations<String, Object> opsForValue() {
             return (ValueOperations<String, Object>) Proxy.newProxyInstance(ValueOperations.class.getClassLoader(),
                     new Class<?>[]{ValueOperations.class}, (proxy, method, args) -> {
-                        if ("get".equals(method.getName())) return values.get(args[0]);
+                        if ("get".equals(method.getName())) {
+                            reads.add((String) args[0]);
+                            return values.get(args[0]);
+                        }
                         if ("set".equals(method.getName()) && args.length == 4) {
                             values.put((String) args[0], args[1]);
                             ttls.put((String) args[0], ((TimeUnit) args[3]).toSeconds((Long) args[2]));

@@ -514,7 +514,8 @@ public class KisApiService {
      * @return 외인/기관 가집계 리스트 (ForeignerOrganization 목록)
      */
     public ForeignerOrganization getForeignerOrganizationData(String stockCode) {
-        Optional<ForeignerOrganization> cached = kisFrgnOrgnRedisRepository.getKisFrgnorgnNtby(stockCode);
+        String baseUrl = config.getBaseUrl();
+        Optional<ForeignerOrganization> cached = kisFrgnOrgnRedisRepository.getKisFrgnorgnNtby(baseUrl, stockCode);
         if (cached.isPresent()) {
             log.info("외인/기관 수량(가집계) 재사용");
             return cached.get();
@@ -522,11 +523,11 @@ public class KisApiService {
         
         // 1. API 호출
     	log.info("한국투자증권 외인/기관 추정가집계 api 호출: {}", stockCode);
-        KisForeignerOrganizationResponse response = foreignerOrganizationAPI(stockCode);
+        KisForeignerOrganizationResponse response = foreignerOrganizationAPI(baseUrl, stockCode);
         if(response.getOutput2().size() ==0){
         	return new ForeignerOrganization();
         }
-        kisFrgnOrgnRedisRepository.save(stockCode, response.getOutput2().get(0));
+        kisFrgnOrgnRedisRepository.save(baseUrl, stockCode, response.getOutput2().get(0));
         
         // 2. 응답 데이터 반환
         return response.getOutput2().get(0);
@@ -535,7 +536,7 @@ public class KisApiService {
     /**
      * 한국투자증권 외인기관 추정가집계 API 호출 (내부 메서드)
      */
-    private KisForeignerOrganizationResponse foreignerOrganizationAPI(String stockCode) {
+    private KisForeignerOrganizationResponse foreignerOrganizationAPI(String baseUrl, String stockCode) {
         return rateLimitedClient.callWithCache(
                 null,
                 () -> {
@@ -544,7 +545,7 @@ public class KisApiService {
                     // 2. 헤더 설정 (이미지 명세 실전 TR ID: HHPTJ04160200)
                     HttpHeaders headers = createApiHeader(token, "HHPTJ04160200");
                     // 3. URL 생성
-                    String url = buildForeignerOrganizationUrl(stockCode);
+                    String url = buildForeignerOrganizationUrl(baseUrl, stockCode);
                     // 4. API 호출
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<KisForeignerOrganizationResponse> response =
@@ -563,8 +564,8 @@ public class KisApiService {
     /**
      * 외인기관 추정가집계용 URL 생성 (내부 메서드)
      */
-    private String buildForeignerOrganizationUrl(String stockCode) {
-        final URI uri = URI.create(config.getBaseUrl() + KisApiConstant.FOREIGNER_ORGANIZATION_PATH);
+    private String buildForeignerOrganizationUrl(String baseUrl, String stockCode) {
+        final URI uri = URI.create(baseUrl + KisApiConstant.FOREIGNER_ORGANIZATION_PATH);
         return UriComponentsBuilder
                 .fromUri(uri)
                 .queryParam("MKSC_SHRN_ISCD", stockCode) // 종목코드 파라미터
