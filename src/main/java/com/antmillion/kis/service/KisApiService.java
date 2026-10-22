@@ -53,15 +53,20 @@ public class KisApiService {
      * Redis에 유효한 토큰이 있으면 반환, 없으면 신규 발급 후 Redis에 저장
      */
     public String getKisAccessToken() {
+        return getKisAccessToken(config.getBaseUrl());
+    }
+
+    private String getKisAccessToken(String baseUrl) {
+        KisAccessTokenScope scope = new KisAccessTokenScope(baseUrl, config.appKey, config.appSecret);
         // Redis에서 토큰 조회
-        Optional<String> saved = kisAccessTokenRedisRepository.findAccessToken();
+        Optional<String> saved = kisAccessTokenRedisRepository.findAccessToken(scope);
         if (saved.isPresent()) {
             log.info("기존 토큰 재사용");
             return saved.get();
         }
 
         // 분산 락 획득
-        RLock lock = redissonClient.getLock("kis:token:lock");
+        RLock lock = redissonClient.getLock(scope.getLockKey());
 
         try {
             // 락 획득 시도: 최대 5초 대기, 획득 후 10초간 유지
@@ -71,7 +76,7 @@ public class KisApiService {
                 log.warn("토큰 발급 락 획득 실패 - 다른 스레드가 발급 중");
                 // 락 획득 실패 시 재시도 (다른 스레드가 발급 완료 후 저장했을 가능성)
                 Thread.sleep(100); // 짧은 대기
-                Optional<String> retried = kisAccessTokenRedisRepository.findAccessToken();
+                Optional<String> retried = kisAccessTokenRedisRepository.findAccessToken(scope);
                 if (retried.isPresent()) {
                     log.info("다른 스레드가 발급한 토큰 사용");
                     return retried.get();
@@ -80,7 +85,7 @@ public class KisApiService {
             }
 
             // 2차 체크: 락 획득 후 다시 한 번 Redis 확인 (Double-Checked Locking)
-            Optional<String> doubleChecked = kisAccessTokenRedisRepository.findAccessToken();
+            Optional<String> doubleChecked = kisAccessTokenRedisRepository.findAccessToken(scope);
             if (doubleChecked.isPresent()) {
                 log.info("락 획득 후 확인: 기존 토큰 재사용");
                 return doubleChecked.get();
@@ -88,10 +93,11 @@ public class KisApiService {
 
             // 신규 발급
             log.info("토큰 신규 발급");
-            KisAccessTokenResponse response = issueAccessTokenAPI();
+            KisAccessTokenResponse response = issueAccessTokenAPI(scope);
 
             // Redis 저장 (TTL 자동 설정)
             kisAccessTokenRedisRepository.save(
+                    scope,
                     response.getAccessToken(),
                     response.getExpiresIn()
             );
@@ -115,11 +121,11 @@ public class KisApiService {
      * 24시간 유효, 6시간마다 재발급 가능, api 호출 시 1분간 재호출 제한
      * @return 접근 토큰, 유효시간
      */
-    private KisAccessTokenResponse issueAccessTokenAPI() {
-        String url = config.getBaseUrl() + KisApiConstant.OAUTH_TOKEN_PATH;
+    private KisAccessTokenResponse issueAccessTokenAPI(KisAccessTokenScope scope) {
+        String url = scope.getBaseUrl() + KisApiConstant.OAUTH_TOKEN_PATH;
         KisAccessTokenRequest body = new KisAccessTokenRequest();
-        body.setAppkey(config.appKey);
-        body.setAppsecret(config.appSecret);
+        body.setAppkey(scope.getAppKey());
+        body.setAppsecret(scope.getAppSecret());
         HttpHeaders headers = new HttpHeaders();
 
         HttpEntity<KisAccessTokenRequest> request =
@@ -450,7 +456,7 @@ public class KisApiService {
         return rateLimitedClient.callWithCache(
                 null,
                 () -> {
-                    String token = getKisAccessToken();
+                    String token = getKisAccessToken(baseUrl);
                     HttpHeaders headers = createApiHeader(token, "FHKST03010230");
                     headers.set("tr_cont", "N"); // 연속 거래 여부
                     String url = buildStreamMinuteApiUrl(baseUrl, request);
@@ -492,7 +498,7 @@ public class KisApiService {
         return rateLimitedClient.callWithCache(
                 cacheKey,
                 () -> {
-                    String token = getKisAccessToken();
+                    String token = getKisAccessToken(baseUrl);
                     HttpHeaders headers = createApiHeader(token, "FHKST01010100");
                     URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)
@@ -544,7 +550,7 @@ public class KisApiService {
                 null,
                 () -> {
                     // 1. 접근 토큰 얻기
-                    String token = getKisAccessToken();
+                    String token = getKisAccessToken(baseUrl);
                     // 2. 헤더 설정 (이미지 명세 실전 TR ID: HHPTJ04160200)
                     HttpHeaders headers = createApiHeader(token, "HHPTJ04160200");
                     // 3. URL 생성
@@ -582,7 +588,7 @@ public class KisApiService {
         return rateLimitedClient.callWithCache(
                 cacheKey,
                 () -> {
-                    String token = getKisAccessToken();
+                    String token = getKisAccessToken(baseUrl);
                     HttpHeaders headers = createApiHeader(token, "FHKST01010100");
                     URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)

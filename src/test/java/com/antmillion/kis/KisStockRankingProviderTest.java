@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.StockVolumeRank;
 import com.antmillion.kis.dto.StockVolumeRankRequest;
@@ -58,7 +59,10 @@ public class KisStockRankingProviderTest {
     @Before
     public void setUp() {
         redis = new MemoryRedis();
-        redis.values.put("kis:access_token", "synthetic-token");
+        for (String endpoint : List.of("https://kis.test", "https://virtual.kis.test")) {
+            redis.values.put(new KisAccessTokenScope(endpoint, "synthetic-key", "synthetic-secret").getTokenKey(),
+                    "synthetic-token");
+        }
         RestTemplate rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
         baseUrl = "https://kis.test";

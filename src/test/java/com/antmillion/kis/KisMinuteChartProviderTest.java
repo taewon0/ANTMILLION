@@ -2,6 +2,7 @@ package com.antmillion.kis;
 
 import com.antmillion.config.GlobalExceptionHandler;
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.controller.KisController;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.StreamMinutePrice;
@@ -73,7 +74,10 @@ public class KisMinuteChartProviderTest {
     @Before
     public void setUp() {
         redis = new MemoryRedis();
-        redis.values.put("kis:access_token", "synthetic-token");
+        for (String endpoint : List.of("https://kis.test", "https://virtual.kis.test")) {
+            redis.values.put(new KisAccessTokenScope(endpoint, "synthetic-key", "synthetic-secret").getTokenKey(),
+                    "synthetic-token");
+        }
         RestTemplate rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
         baseUrl = "https://kis.test";
