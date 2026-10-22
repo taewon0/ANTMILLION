@@ -1,6 +1,7 @@
 package com.antmillion.kis.repository;
 
 import com.antmillion.kis.dto.ChartStockPrice;
+import com.antmillion.kis.dto.ChartStockPriceRequest;
 import com.antmillion.kis.dto.StreamMinutePrice;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class KisChartRedisRepository {
 
-    private static final String KIS_PERIOD_CHART_KEY = "stock:chart";
+    private static final String KIS_PERIOD_CHART_KEY = "kis:chart:period:v2";
     private static final String KIS_STREAM_MINUTE_CHART_KEY = "stream:minute";
     private static final long CACHE_EXPIRE_HOURS = 24; // 24시간 캐시 유지
     private static final long CACHE_EXPIRE_MINUTE = 1; // 1분
@@ -26,17 +27,17 @@ public class KisChartRedisRepository {
 
     /***
      * Redis에 차트 데이터 저장
-     * @param stockCode 종목코드
-     * @param period 기간 : day, week, month, year
+     * @param baseUrl 실제 요청 대상 주소(실전/모의 환경 구분)
+     * @param request 전체 기간별 조회 조건
      * @param chartData 차트 데이터
      */
-    public void save(String stockCode, String period, List<ChartStockPrice> chartData) {
-        String key = buildKey(stockCode, period);
+    public void save(String baseUrl, ChartStockPriceRequest request, List<ChartStockPrice> chartData) {
+        String key = buildKey(baseUrl, request);
         redisTemplate.opsForValue().set(key, chartData, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
     }
 
-    public Optional<List<ChartStockPrice>> getChartData(String stockCode, String period) {
-        String key = buildKey(stockCode, period);
+    public Optional<List<ChartStockPrice>> getChartData(String baseUrl, ChartStockPriceRequest request) {
+        String key = buildKey(baseUrl, request);
         Object data = redisTemplate.opsForValue().get(key);
 
         if (data == null) {
@@ -57,10 +58,17 @@ public class KisChartRedisRepository {
     }
 
     /**
-     * Redis에 저장할 키 값 생성
+     * Provider·환경·모든 조회 조건을 구분하며, 불완전한 기존 키는 재사용하지 않습니다.
      */
-    private String buildKey(String stockCode, String period) {
-        return String.format("%s:%s:%s", KIS_PERIOD_CHART_KEY, period, stockCode);
+    private String buildKey(String baseUrl, ChartStockPriceRequest request) {
+        StringBuilder key = new StringBuilder(KIS_PERIOD_CHART_KEY);
+        for (String value : new String[]{baseUrl, request.getMarketCode(), request.getStockCode(),
+                request.getPeriodCode(), request.getStartDate(), request.getEndDate(), request.getAdjPrice()}) {
+            // 길이를 함께 저장해 구분자가 포함된 값과 null/빈 문자열도 서로 섞이지 않게 합니다.
+            key.append(':').append(value == null ? -1 : value.length()).append(':');
+            if (value != null) key.append(value);
+        }
+        return key.toString();
     }
 
 
