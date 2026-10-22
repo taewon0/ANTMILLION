@@ -484,14 +484,15 @@ public class KisApiService {
 
     public Integer getCurrentPrice(CurrentPriceRequest request) {
         // 현재가는 실시간성이 중요하므로 캐싱 TTL 짧게
-        String cacheKey = "current:price:" + request.getStockCode();
+        String baseUrl = config.getBaseUrl();
+        String cacheKey = buildCurrentPriceCacheKey("kis:price:single:v2", baseUrl, request);
 
         return rateLimitedClient.callWithCache(
                 cacheKey,
                 () -> {
                     String token = getKisAccessToken();
                     HttpHeaders headers = createApiHeader(token, "FHKST01010100");
-                    URI uri = URI.create(config.getBaseUrl() + KisApiConstant.PRESENT_PRICE);
+                    URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)
                             .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
                             .queryParam("FID_INPUT_ISCD", request.getStockCode())
@@ -572,14 +573,15 @@ public class KisApiService {
     }
 
     public CurrentPrice getCurrentPriceDetail(CurrentPriceRequest request) {
-        String cacheKey = "current:price:detail:" + request.getStockCode();
+        String baseUrl = config.getBaseUrl();
+        String cacheKey = buildCurrentPriceCacheKey("kis:price:detail:v2", baseUrl, request);
 
         return rateLimitedClient.callWithCache(
                 cacheKey,
                 () -> {
                     String token = getKisAccessToken();
                     HttpHeaders headers = createApiHeader(token, "FHKST01010100");
-                    URI uri = URI.create(config.getBaseUrl() + KisApiConstant.PRESENT_PRICE);
+                    URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)
                             .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
                             .queryParam("FID_INPUT_ISCD", request.getStockCode())
@@ -594,6 +596,17 @@ public class KisApiService {
                 },
                 10
         );
+    }
+
+    /** Provider·저장 타입·실제 요청 환경·전체 조회 조건을 구분하고 기존 키는 재사용하지 않습니다. */
+    private String buildCurrentPriceCacheKey(String prefix, String baseUrl, CurrentPriceRequest request) {
+        StringBuilder key = new StringBuilder(prefix);
+        for (String value : new String[]{baseUrl, request.getMarketCode(), request.getStockCode()}) {
+            // 길이를 포함해 구분자·null·빈 문자열이 있는 조건도 서로 섞이지 않게 합니다.
+            key.append(':').append(value == null ? -1 : value.length()).append(':');
+            if (value != null) key.append(value);
+        }
+        return key.toString();
     }
 
     public List<CurrentPrice> getCurrentPricesDetail(List<String> stockCodes) {
