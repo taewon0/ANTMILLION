@@ -25,7 +25,7 @@ public class KisStockRankingProvider implements StockRankingProvider {
     }
 
     private List<RankedStock> getRanks(String order, String excludedClasses) {
-        // 기존 토큰·단일 캐시·공유 제한을 재사용하고 KIS 응답/캐시 객체는 노출하지 않습니다.
+        // 기존 토큰·조건별 캐시·공유 제한을 재사용하고 KIS 응답/캐시 객체는 노출하지 않습니다.
         return kisApiService.getStockVolumeRanks(StockVolumeRankRequest.builder()
                 .marketCode("J")
                 .screenCode("20171")

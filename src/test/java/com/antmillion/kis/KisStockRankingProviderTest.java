@@ -30,10 +30,12 @@ import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import static org.junit.Assert.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
@@ -50,6 +52,8 @@ public class KisStockRankingProviderTest {
     private KisApiService legacy;
     private StockRankingProvider provider;
     private RateLimitedKisApiClient limiter;
+    private KisStockVolumeRankRedisRepository ranks;
+    private String baseUrl;
 
     @Before
     public void setUp() {
@@ -57,15 +61,47 @@ public class KisStockRankingProviderTest {
         redis.values.put("kis:access_token", "synthetic-token");
         RestTemplate rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
+        baseUrl = "https://kis.test";
         KisConfig config = new KisConfig() {
-            @Override public String getBaseUrl() { return "https://kis.test"; }
+            @Override public String getBaseUrl() { return baseUrl; }
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
         limiter = new RateLimitedKisApiClient(redis);
+        ranks = new KisStockVolumeRankRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null, null,
-                new KisStockVolumeRankRedisRepository(redis, new ObjectMapper()), null, null, limiter);
+                ranks, null, null, limiter);
         provider = new KisStockRankingProvider(legacy);
+    }
+
+    @Test
+    public void tradingThenVolumeQueriesKeepIndependentResultsAndReuseTheirOwnCaches() {
+        assertIndependentQueries(false);
+    }
+
+    @Test
+    public void volumeThenTradingQueriesKeepIndependentResultsAndReuseTheirOwnCaches() {
+        assertIndependentQueries(true);
+    }
+
+    private void assertIndependentQueries(boolean volumeFirst) {
+        if (volumeFirst) {
+            expectRanks("0", "0000001100", RANKS.replace("071000", "072000"));
+            expectRanks("3", "0000000000", RANKS);
+            assertEquals("072000", provider.getVolumeRanks().get(0).getCurrentPrice());
+            assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        } else {
+            expectRanks("3", "0000000000", RANKS);
+            expectRanks("0", "0000001100", RANKS.replace("071000", "072000"));
+            assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+            assertEquals("072000", provider.getVolumeRanks().get(0).getCurrentPrice());
+        }
+        useFixedBudget(0);
+        assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        assertEquals("072000", provider.getVolumeRanks().get(0).getCurrentPrice());
+        assertEquals(2, redis.ttls.size());
+        assertTrue(redis.ttls.values().stream().allMatch(ttl -> ttl == 60));
+        server.verify();
     }
 
     @Test
@@ -76,25 +112,24 @@ public class KisStockRankingProviderTest {
                 new RankedStock("합성종목", "000001", "02", "071000", "001234", "-1.20", false),
                 new RankedStock(null, "000002", "01", "", null, null, true));
         assertEquals(expected, provider.getTradingValueRanks());
-        assertTrue(((List<?>) redis.values.get("stock:volume-rank")).get(0) instanceof StockVolumeRank);
-        assertEquals(Long.valueOf(60), redis.ttls.get("stock:volume-rank"));
-        redis.values.remove("stock:volume-rank");
+        assertTrue(((List<?>) redis.values.get(key("3", "0000000000"))).get(0) instanceof StockVolumeRank);
+        assertEquals(Long.valueOf(60), redis.ttls.get(key("3", "0000000000")));
         assertEquals(expected, provider.getVolumeRanks());
-        assertEquals(1, redis.ttls.size());
+        assertEquals(2, redis.ttls.size());
         server.verify();
     }
 
     @Test
     public void cachedJsonPreservesMissingFieldsAndNullableFavoriteWithoutBudgetUse() {
         useFixedBudget(0);
-        redis.values.put("stock:volume-rank", List.of(
+        redis.values.put(key("3", "0000000000"), List.of(
                 Map.of("mksc_shrn_iscd", "000002", "isFavorite", true),
                 Map.of("mksc_shrn_iscd", "000001", "stck_prpr", "")));
         assertEquals(List.of(new RankedStock(null, "000002", null, null, null, null, true),
                 new RankedStock(null, "000001", null, "", null, null, false)), provider.getTradingValueRanks());
         com.fasterxml.jackson.databind.node.ArrayNode cached = new ObjectMapper().createArrayNode();
         cached.addObject().put("mksc_shrn_iscd", "000003").putNull("isFavorite");
-        redis.values.put("stock:volume-rank", cached);
+        redis.values.put(key("0", "0000001100"), cached);
         assertNull(provider.getVolumeRanks().get(0).getFavorite());
         assertTrue(redis.ttls.isEmpty());
         assertEquals(0, limiter.getAvailableTokens());
@@ -102,16 +137,15 @@ public class KisStockRankingProviderTest {
     }
 
     @Test
-    public void snapshotDoesNotExposeCachedDtoAndExistingSharedKeyRemainsRequestInsensitive() {
+    public void snapshotDoesNotExposeMutableCachedDto() {
         expectRanks("3", "0000000000", RANKS);
         List<RankedStock> snapshot = provider.getTradingValueRanks();
-        StockVolumeRank cached = (StockVolumeRank) ((List<?>) redis.values.get("stock:volume-rank")).get(0);
+        StockVolumeRank cached = (StockVolumeRank) ((List<?>) redis.values.get(key("3", "0000000000"))).get(0);
         cached.setPresentPrice("changed");
         cached.setIsFavorite(true);
         assertEquals("071000", snapshot.get(0).getCurrentPrice());
         assertEquals(Boolean.FALSE, snapshot.get(0).getFavorite());
-        // 두 조회가 같은 캐시를 사용하는 기존 한계는 이번 변경에서 수정하지 않습니다.
-        assertEquals("changed", provider.getVolumeRanks().get(0).getCurrentPrice());
+        assertEquals("changed", provider.getTradingValueRanks().get(0).getCurrentPrice());
         assertEquals(1, redis.ttls.size());
         server.verify();
     }
@@ -120,7 +154,7 @@ public class KisStockRankingProviderTest {
     public void nullRowsStayNullOnRemoteAndCachedPaths() {
         expectRanks("0", "0000001100", "{\"output\":[null]}");
         assertEquals(1, provider.getVolumeRanks().size());
-        assertNull(provider.getTradingValueRanks().get(0));
+        assertNull(provider.getVolumeRanks().get(0));
         server.verify();
     }
 
@@ -129,9 +163,9 @@ public class KisStockRankingProviderTest {
         useFixedBudget(1);
         expectRanks("3", "0000000000", "{\"output\":[]}");
         assertTrue(provider.getTradingValueRanks().isEmpty());
-        assertTrue(provider.getVolumeRanks().isEmpty());
-        assertEquals(List.of(), redis.values.get("stock:volume-rank"));
-        assertEquals(Long.valueOf(60), redis.ttls.get("stock:volume-rank"));
+        assertTrue(provider.getTradingValueRanks().isEmpty());
+        assertEquals(List.of(), redis.values.get(key("3", "0000000000")));
+        assertEquals(Long.valueOf(60), redis.ttls.get(key("3", "0000000000")));
         assertEquals(0, limiter.getAvailableTokens());
         server.verify();
     }
@@ -143,9 +177,9 @@ public class KisStockRankingProviderTest {
         provider.getTradingValueRanks();
         assertThrows(RateLimitExceededException.class, () -> legacy.getCurrentPrice(
                 CurrentPriceRequest.builder().stockCode("000001").marketCode("J").build()));
-        redis.values.remove("stock:volume-rank");
         assertThrows(RateLimitExceededException.class, () -> provider.getVolumeRanks());
-        assertFalse(redis.values.containsKey("stock:volume-rank"));
+        assertEquals(2, provider.getTradingValueRanks().size());
+        assertFalse(redis.values.containsKey(key("0", "0000001100")));
         server.verify();
     }
 
@@ -171,10 +205,10 @@ public class KisStockRankingProviderTest {
 
     @Test
     public void unreadableCacheKeepsExistingRemoteReload() {
-        redis.values.put("stock:volume-rank", "invalid-cache");
+        redis.values.put(key("0", "0000001100"), "invalid-cache");
         expectRanks("0", "0000001100", RANKS);
         assertEquals(2, provider.getVolumeRanks().size());
-        assertEquals(Long.valueOf(60), redis.ttls.get("stock:volume-rank"));
+        assertEquals(Long.valueOf(60), redis.ttls.get(key("0", "0000001100")));
         server.verify();
     }
 
@@ -194,9 +228,116 @@ public class KisStockRankingProviderTest {
         server.verify();
     }
 
+    @Test
+    public void effectiveEndpointSeparatesEnvironmentsAndReturningReusesTheCache() {
+        expectRanks("3", "0000000000", RANKS);
+        baseUrl = "https://virtual.kis.test";
+        expectRanks("3", "0000000000", RANKS.replace("071000", "072000"));
+        baseUrl = "https://kis.test";
+        assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        baseUrl = "https://virtual.kis.test";
+        assertEquals("072000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        useFixedBudget(0);
+        baseUrl = "https://kis.test";
+        assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        baseUrl = "https://virtual.kis.test";
+        assertEquals("072000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        assertEquals(2, redis.ttls.size());
+        server.verify();
+    }
+
+    @Test
+    public void everyQueryConditionHasAnIndependentCache() {
+        List<Consumer<StockVolumeRankRequest>> changes = List.of(
+                r -> r.setMarketCode("NX"), r -> r.setScreenCode("20172"),
+                r -> r.setInputCode("0001"), r -> r.setDivClassCode("1"),
+                r -> r.setBlngClassCode("0"), r -> r.setTargetClassCode("111111110"),
+                r -> r.setTargetExlsClassCode("0000001100"), r -> r.setInputPrice1("100"),
+                r -> r.setInputPrice2("1000"), r -> r.setVolumeCount("10"),
+                r -> r.setInputDate1("20261021"));
+        List<StockVolumeRankRequest> requests = new ArrayList<>();
+        requests.add(request("3", "0000000000"));
+        for (Consumer<StockVolumeRankRequest> change : changes) {
+            StockVolumeRankRequest request = request("3", "0000000000");
+            change.accept(request);
+            requests.add(request);
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            StockVolumeRank row = new StockVolumeRank();
+            row.setPresentPrice(String.valueOf(i));
+            ranks.save(baseUrl, requests.get(i), List.of(row));
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            assertEquals(String.valueOf(i), ranks.getStockVolumeRanks(baseUrl, requests.get(i))
+                    .get().get(0).getPresentPrice());
+        }
+        assertEquals(12, redis.ttls.size());
+        assertTrue(redis.ttls.values().stream().allMatch(ttl -> ttl == 60));
+        server.verify();
+    }
+
+    @Test
+    public void incompleteLegacyAndOtherProviderKeysAreIgnoredAndLeftToExpire() {
+        List<Map<String, String>> obsolete = List.of(Map.of("stck_prpr", "obsolete"));
+        String oldKey = "stock:volume-rank";
+        String otherProviderKey = key("3", "0000000000").replaceFirst("kis:", "kiwoom:");
+        redis.values.put(oldKey, obsolete);
+        redis.values.put(otherProviderKey, obsolete);
+        expectRanks("3", "0000000000", RANKS);
+        assertEquals("071000", provider.getTradingValueRanks().get(0).getCurrentPrice());
+        assertEquals(obsolete, redis.values.get(oldKey));
+        assertEquals(obsolete, redis.values.get(otherProviderKey));
+        assertEquals(1, redis.ttls.size());
+        server.verify();
+    }
+
+    @Test
+    public void delimitersNullAndEmptyConditionsCannotAliasInRepositoryKeys() {
+        StockVolumeRankRequest first = request("3", "0000000000");
+        first.setMarketCode("A:B");
+        first.setScreenCode("C");
+        StockVolumeRankRequest second = request("3", "0000000000");
+        second.setMarketCode("A");
+        second.setScreenCode("B:C");
+        List<StockVolumeRankRequest> requests = new ArrayList<>(List.of(first, second));
+        for (String value : new String[]{null, "", "null"}) {
+            StockVolumeRankRequest request = request("3", "0000000000");
+            request.setMarketCode(value);
+            requests.add(request);
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            StockVolumeRank row = new StockVolumeRank();
+            row.setPresentPrice(String.valueOf(i));
+            ranks.save(baseUrl, requests.get(i), List.of(row));
+        }
+        for (int i = 0; i < requests.size(); i++) {
+            assertEquals(String.valueOf(i), ranks.getStockVolumeRanks(baseUrl, requests.get(i))
+                    .get().get(0).getPresentPrice());
+        }
+        assertEquals(5, redis.ttls.size());
+        server.verify();
+    }
+
+    private StockVolumeRankRequest request(String order, String excludedClasses) {
+        return StockVolumeRankRequest.builder().marketCode("J").screenCode("20171").inputCode("0000")
+                .divClassCode("0").blngClassCode(order).targetClassCode("111111111")
+                .targetExlsClassCode(excludedClasses).inputPrice1("0").inputPrice2("0")
+                .volumeCount("0").inputDate1("0").build();
+    }
+
+    private String key(String order, String excludedClasses) {
+        StringBuilder key = new StringBuilder("kis:stock:volume-rank:v2");
+        for (String value : new String[]{baseUrl, "J", "20171", "0000", "0", order, "111111111",
+                excludedClasses, "0", "0", "0", "0"}) {
+            key.append(':').append(value.length()).append(':').append(value);
+        }
+        return key.toString();
+    }
+
     private void expectRanks(String order, String excludedClasses, String json) {
+        String expectedUrl = url(order, excludedClasses);
         server.expect(request -> {
-            assertEquals(url(order, excludedClasses), request.getURI().toString());
+            assertEquals(expectedUrl, request.getURI().toString());
             assertEquals(HttpMethod.GET, request.getMethod());
             assertEquals("Bearer synthetic-token", request.getHeaders().getFirst("Authorization"));
             assertEquals("synthetic-key", request.getHeaders().getFirst("appkey"));
@@ -207,7 +348,7 @@ public class KisStockRankingProviderTest {
     }
 
     private String url(String order, String excludedClasses) {
-        return "https://kis.test/uapi/domestic-stock/v1/quotations/volume-rank"
+        return baseUrl + "/uapi/domestic-stock/v1/quotations/volume-rank"
                 + "?FID_COND_MRKT_DIV_CODE=J&FID_COND_SCR_DIV_CODE=20171&FID_INPUT_ISCD=0000"
                 + "&FID_DIV_CLS_CODE=0&FID_BLNG_CLS_CODE=" + order
                 + "&FID_TRGT_CLS_CODE=111111111&FID_TRGT_EXLS_CLS_CODE=" + excludedClasses

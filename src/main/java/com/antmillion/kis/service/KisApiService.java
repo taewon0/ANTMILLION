@@ -355,7 +355,8 @@ public class KisApiService {
      * @return 거래량순 종목리스트 상위 30개
      */
     public List<StockVolumeRank> getStockVolumeRanks(StockVolumeRankRequest request) {
-        Optional<List<StockVolumeRank>> cached =  kisStockVolumeRankRedisRepository.getStockVolumeRanks();
+        String baseUrl = config.getBaseUrl();
+        Optional<List<StockVolumeRank>> cached =  kisStockVolumeRankRedisRepository.getStockVolumeRanks(baseUrl, request);
         if (cached.isPresent()) {
             log.info("거래량 순위 데이터 재사용");
             return cached.get();
@@ -363,7 +364,7 @@ public class KisApiService {
 
         log.info("한국투자증권 거래량순위 API 호출");
         KisStockVolumeRankResponse response = stockVolumeRankAPI(request);
-        kisStockVolumeRankRedisRepository.save(response.getOutput());
+        kisStockVolumeRankRedisRepository.save(baseUrl, request, response.getOutput());
         return  response.getOutput();
     }
 
