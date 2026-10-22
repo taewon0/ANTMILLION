@@ -319,16 +319,19 @@ public class KisApiService {
      * 
      */
     private DayMinutePriceResponse dayMinutePricesAPI(DayMinutePriceRequest request) {
-    	String token = getKisAccessToken();
-        HttpHeaders headers = createApiHeader(token, "FHKST03010200");
-        String url = buildDayMinuteApiUrl(request);
-        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-        ResponseEntity<DayMinutePriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, DayMinutePriceResponse.class);
-        DayMinutePriceResponse responseBody = response.getBody();
-        if(responseBody != null) {
-        	return responseBody;
-        }
-        throw new RuntimeException("국내 시장 당일 분봉 데이터 조회 실패");
+        // 캐시 없는 최근 분봉도 다른 KIS 시세 조회와 호출 예산을 공유합니다.
+        return rateLimitedClient.callWithoutCache(() -> {
+            String token = getKisAccessToken();
+            HttpHeaders headers = createApiHeader(token, "FHKST03010200");
+            String url = buildDayMinuteApiUrl(request);
+            HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+            ResponseEntity<DayMinutePriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, DayMinutePriceResponse.class);
+            DayMinutePriceResponse responseBody = response.getBody();
+            if(responseBody != null) {
+                return responseBody;
+            }
+            throw new RuntimeException("국내 시장 당일 분봉 데이터 조회 실패");
+        });
     }
     
     /**

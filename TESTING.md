@@ -166,7 +166,10 @@ node --test scripts/tests/minute-chart.test.cjs scripts/tests/period-chart.test.
 ```
 
 `/stream`의 날짜·15:30 기준 요청·가격 문자열·원본 역순 반환·1분 캐시와 공유 호출 제한,
-`/candle`의 서버 현재 시각·숫자 가격·누락 가격 0·null 목록/행·기존 limiter 우회를 확인합니다.
+`/candle`의 서버 현재 시각·숫자 가격·누락 가격 0·null 목록/행·공유 호출 제한을 확인합니다.
+최근 분봉은 요청마다 공유 예산을 소비하며 캐시·자동 재시도 없이 한도 소진 시 즉시 거절합니다.
+예산 소진 시 토큰 조회·외부 HTTP 호출 차단과 실제 서비스부터 MVC까지의 429/Retry-After 응답,
+다른 시세와의 예산 공유 및 원격 실패 시 예산 소비도 대역으로 검증합니다.
 실제 서비스·캐시 repository·limiter에 HTTP·메모리 Redis 대역만 연결하며,
 개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
 일별 분봉 캐시는 Provider·실제 요청 환경·전체 6개 조회 조건별 분리와 동일 조건 재사용을 확인합니다.
