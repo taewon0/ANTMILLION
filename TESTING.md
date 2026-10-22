@@ -169,7 +169,9 @@ node --test scripts/tests/minute-chart.test.cjs scripts/tests/period-chart.test.
 `/candle`의 서버 현재 시각·숫자 가격·누락 가격 0·null 목록/행·기존 limiter 우회를 확인합니다.
 실제 서비스·캐시 repository·limiter에 HTTP·메모리 Redis 대역만 연결하며,
 개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
-일별 분봉 캐시가 요청 일자 대신 서버 오늘 날짜를 쓰는 기존 한계와 두 경로의 시간대 정책은 유지합니다.
+일별 분봉 캐시는 Provider·실제 요청 환경·전체 6개 조회 조건별 분리와 동일 조건 재사용을 확인합니다.
+요청 날짜의 양방향 조회·기존 키/다른 Provider 키 미사용·60초 TTL·구분자/null/빈 문자열 비충돌도 검증합니다.
+두 경로의 기존 시간대 정책은 유지합니다.
 Java 회귀는 `Test-Trading.ps1`에도 포함되며, JS는 메인·상세 화면의 실제 분봉 소비 함수를 대역에서 검증합니다.
 
 REST 시세 Provider 선택·라우팅은 아래 명령으로 검증합니다.
