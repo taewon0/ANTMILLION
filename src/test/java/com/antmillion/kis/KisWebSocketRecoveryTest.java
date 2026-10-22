@@ -2,7 +2,8 @@ package com.antmillion.kis;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.manager.KisWebSocketManager;
-import com.antmillion.kis.manager.KisSubscriptionRegistry;
+import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
+import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.stock.service.TradingEngineService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -658,7 +659,7 @@ public class KisWebSocketRecoveryTest {
     @Test
     public void registrySharesScreenAndOrderIntentsAndRestoresOnlyRemainingOwner() {
         try (Manager manager = new Manager()) {
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             manager.start();
             registry.replaceOrderStocks(Set.of("005930"));
             registry.connected(new SessionConnectEvent(this, frame(StompCommand.CONNECT, "a", null, null)));
@@ -899,7 +900,7 @@ public class KisWebSocketRecoveryTest {
     public void timeoutExhaustionSuspendsOnlyFailingRefAndDoesNotRetryOnSharedAcquisition() {
         try (Manager manager = new Manager()) {
             manager.autoAcknowledge = false;
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             manager.start();
             registry.replaceOrderStocks(Set.of("005930"));
             registry.connected(new SessionConnectEvent(this, frame(StompCommand.CONNECT, "screen", null, null)));
@@ -955,7 +956,7 @@ public class KisWebSocketRecoveryTest {
     public void marketBoundaryRotatesSharedPricesAndOrderQuotesOnceAndReturnsAtMidnight() {
         try (Manager manager = new Manager()) {
             manager.market = LocalTime.of(15, 29, 59);
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             manager.start();
             registry.replaceOrderStocks(Set.of("005930"));
             registry.connected(new SessionConnectEvent(this, frame(StompCommand.CONNECT, "screen", null, null)));
@@ -1118,7 +1119,7 @@ public class KisWebSocketRecoveryTest {
     @Test
     public void releasedAndNewSharedOwnersDuringOutageRestoreOnlyLatestMarketReferences() {
         try (Manager manager = new Manager()) {
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             manager.start();
             registry.replaceOrderStocks(Set.of("005930", "000660"));
             manager.tick();

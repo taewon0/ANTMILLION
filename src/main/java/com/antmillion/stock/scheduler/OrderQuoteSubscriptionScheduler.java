@@ -1,6 +1,6 @@
 package com.antmillion.stock.scheduler;
 
-import com.antmillion.kis.manager.KisSubscriptionRegistry;
+import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
 import com.antmillion.stock.mapper.StockOrderMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
@@ -22,7 +22,7 @@ import java.util.concurrent.ScheduledFuture;
 @Profile("!dev-mock")
 public class OrderQuoteSubscriptionScheduler implements SmartLifecycle {
     private final StockOrderMapper orders;
-    private final KisSubscriptionRegistry registry;
+    private final RealtimeSubscriptionRegistry registry;
     private final TransactionTemplate readTransaction;
     private final Object applyMonitor = new Object();
     private ThreadPoolTaskScheduler scheduler;
@@ -30,7 +30,7 @@ public class OrderQuoteSubscriptionScheduler implements SmartLifecycle {
     private volatile boolean running;
     private volatile long generation;
 
-    public OrderQuoteSubscriptionScheduler(StockOrderMapper orders, KisSubscriptionRegistry registry,
+    public OrderQuoteSubscriptionScheduler(StockOrderMapper orders, RealtimeSubscriptionRegistry registry,
             PlatformTransactionManager transactionManager) {
         this.orders = orders;
         this.registry = registry;

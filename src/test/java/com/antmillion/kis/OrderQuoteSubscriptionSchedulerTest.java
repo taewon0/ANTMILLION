@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
-import com.antmillion.kis.manager.KisSubscriptionRegistry;
+import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
+import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.stock.mapper.StockOrderMapper;
 import com.antmillion.stock.scheduler.OrderQuoteSubscriptionScheduler;
 import org.junit.Test;
@@ -47,7 +48,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
     }
 
     @Configuration
-    @Import({KisSubscriptionRegistry.class, OrderQuoteSubscriptionScheduler.class})
+    @Import({RealtimeSubscriptionRegistry.class, KisRealtimeSubscriptionProvider.class, OrderQuoteSubscriptionScheduler.class})
     static class StartupConfig {
         @Bean public StartupProvider manager() { return new StartupProvider(); }
         @Bean public StockOrderMapper orders() { return mapper(() -> List.of("005930")); }
@@ -67,7 +68,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
         try (KisSubscriptionRegistryTest.Wire wire = new KisSubscriptionRegistryTest.Wire()) {
             Worker worker = new Worker();
             OrderQuoteSubscriptionScheduler scheduler = scheduler(mapper(() -> List.of("005930")),
-                    wire.context.getBean(KisSubscriptionRegistry.class), noDbTransaction(), worker);
+                    wire.context.getBean(RealtimeSubscriptionRegistry.class), noDbTransaction(), worker);
             try {
                 scheduler.start();
                 scheduler.start();
@@ -99,7 +100,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
             OrderQuoteSubscriptionScheduler scheduler = scheduler(mapper(() -> {
                 if (failed.get()) throw new IllegalStateException("synthetic DB failure");
                 return stocks.get();
-            }), wire.context.getBean(KisSubscriptionRegistry.class), noDbTransaction(), worker);
+            }), wire.context.getBean(RealtimeSubscriptionRegistry.class), noDbTransaction(), worker);
             try {
                 scheduler.start();
                 worker.task.run();
@@ -128,7 +129,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
                 }
             }
         };
-        KisSubscriptionRegistry registry = new KisSubscriptionRegistry(provider);
+        RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(provider));
         OrderQuoteSubscriptionScheduler scheduler = new OrderQuoteSubscriptionScheduler(
                 mapper(() -> List.of("005930")), registry, noDbTransaction());
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -160,7 +161,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
                     return List.of("005930");
                 }
                 return List.of("000660");
-            }), wire.context.getBean(KisSubscriptionRegistry.class), noDbTransaction(), worker);
+            }), wire.context.getBean(RealtimeSubscriptionRegistry.class), noDbTransaction(), worker);
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 scheduler.start();
@@ -191,7 +192,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
                 }
             };
             OrderQuoteSubscriptionScheduler scheduler = scheduler(mapper(List::of),
-                    wire.context.getBean(KisSubscriptionRegistry.class), noDbTransaction(), worker);
+                    wire.context.getBean(RealtimeSubscriptionRegistry.class), noDbTransaction(), worker);
             assertThrows(IllegalStateException.class, scheduler::start);
             assertTrue(worker.closed);
             assertFalse(scheduler.isRunning());
@@ -208,7 +209,7 @@ public class OrderQuoteSubscriptionSchedulerTest {
         }
     }
 
-    static OrderQuoteSubscriptionScheduler scheduler(StockOrderMapper orders, KisSubscriptionRegistry registry,
+    static OrderQuoteSubscriptionScheduler scheduler(StockOrderMapper orders, RealtimeSubscriptionRegistry registry,
             PlatformTransactionManager transactionManager, Worker worker) {
         return new OrderQuoteSubscriptionScheduler(orders, registry, transactionManager) {
             @Override protected ThreadPoolTaskScheduler createScheduler() { return worker; }
