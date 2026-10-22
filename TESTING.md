@@ -269,3 +269,19 @@ KIS REST·Redis 구성·마스터 동기화의 생성/실행은 이 WS 선택의
 테스트는 실제 선택·KIS 등록 구성과 Manager, 합성 Provider/STOMP 이벤트를 사용합니다.
 선택된 KIS의 worker는 외부 구독 없이 시작/종료하며, 미선택 KIS는 희망 구독이 있어도 worker 생성·approval·handshake가 0인지 확인합니다.
 개발 properties·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다. Java 회귀는 `Test-Trading.ps1`에도 포함됩니다.
+
+KIS 액세스 토큰·발급 잠금 격리는 아래 명령으로 별도 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisAccessTokenIsolationTest' test
+```
+
+실제 서비스·저장소에 MockRestServiceServer, 메모리 Redis와 Redisson 잠금 대역만 연결합니다.
+실전/모의 양방향·실제 요청 주소·앱 키/시크릿별 격리, 같은 범위 재사용·선택적 삭제,
+잠금 후 재확인·획득 실패·인터럽트·HTTP/저장 실패 시 해제를 확인합니다.
+한 번의 토큰 처리에서는 환경·자격증명의 같은 스냅샷을 사용하며, 응답의 expires_in TTL과 기존 잠금 대기/lease를 유지합니다.
+키는 Provider·실제 base URL·앱 키·시크릿의 길이 구분 UTF-8 값을 SHA-256으로 식별하여 원문을 포함하지 않습니다.
+기존 `kis:access_token`·`kis:token:lock`은 사용하지 않으며 기존 토큰은 자연 만료됩니다.
+배포 후 첫 cache miss는 새 범위에서 발급을 요청하므로 구버전과 신버전의 동시 실행은 발급 잠금을 공유하지 않습니다.
+실제 자격증명·외부 HTTP·Redis·분산 잠금/TTL 만료·전체 앱 기동은 검증하지 않습니다.
+선제 갱신·401 무효화·발급 제한 정책은 후속 범위이며 이 Java 회귀도 `Test-Trading.ps1`에 포함됩니다.
