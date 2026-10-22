@@ -93,13 +93,13 @@ public class KisMarketIndexChartControllerTest {
     @Test
     public void providerFailureStillPropagatesWithoutEmptyFallback() {
         RuntimeException failure = new RuntimeException("synthetic failure");
-        KisController controller = new KisController(null, null, null, null, request -> { throw failure; });
+        KisController controller = new KisController(null, null, null, null, request -> { throw failure; }, null);
         assertSame(failure, assertThrows(RuntimeException.class, () -> controller.marketIndexChart("0001")));
     }
 
     private MockMvc mvc(MarketIndexChartProvider provider) {
         // 다른 기능의 KIS 서비스·외부 WS manager는 생성하지 않습니다.
-        return MockMvcBuilders.standaloneSetup(new KisController(null, null, null, null, provider))
+        return MockMvcBuilders.standaloneSetup(new KisController(null, null, null, null, provider, null))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
     }
 }
