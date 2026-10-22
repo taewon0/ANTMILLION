@@ -285,3 +285,32 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisAccessTokenIsolationTes
 배포 후 첫 cache miss는 새 범위에서 발급을 요청하므로 구버전과 신버전의 동시 실행은 발급 잠금을 공유하지 않습니다.
 실제 자격증명·외부 HTTP·Redis·분산 잠금/TTL 만료·전체 앱 기동은 검증하지 않습니다.
 선제 갱신·401 무효화·발급 제한 정책은 후속 범위이며 이 Java 회귀도 `Test-Trading.ps1`에 포함됩니다.
+
+KIS 시세 REST의 환경·계좌별 호출 제한은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisRestRateLimitTest,KisAccessTokenIsolationTest,KisCurrentPriceProviderTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisMinuteChartProviderTest,KisMinuteChartControllerTest,KisMarketIndexChartProviderTest,KisMarketIndexChartControllerTest,KisStockRankingProviderTest,KisStockRankingControllerTest,KisInvestorFlowProviderTest,KisInvestorSignalControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,InterestControllerTest' test
+```
+
+실제 요청 주소·계좌번호·계좌 상품코드별로 JVM의 Bucket4j 예산을 공유합니다.
+앱 키/시크릿을 변경해도 같은 계좌의 예산은 유지하며, 범위 식별자는 원문을 노출하지 않는 SHA-256 값입니다.
+시세 REST 한 번의 예산·토큰·헤더·주소·캐시는 같은 요청 설정 스냅샷을 사용합니다.
+서버의 `kisApi.properties` 또는 JVM 시스템 속성으로 아래 값을 설정하고 재시작합니다.
+
+| 설정 | 기본값 | 허용 범위 |
+|---|---|---|
+| `kis.rest.rate-limit.real-per-second` | 18 | 1~18 |
+| `kis.rest.rate-limit.virtual-per-second` | 1 | 1 |
+
+빈 값·숫자가 아닌 값·범위 초과 값이나 누락된 계좌번호/상품코드는 bean 생성 시 거부합니다.
+[공식 일반 유량 안내](https://apiportal.koreainvestment.com/community/10000000-0000-0011-0000-000000000001/post/d0d1a83f-6f8d-4437-9700-6d26702fd989)의 계좌별 실전 18건/초·모의 1건/초를 상한으로 사용합니다.
+신규 고객 별도 제한이 있으므로 실제 적용 한도를 확인하고 실전 값을 직접 낮춰야 합니다. 고객 상태를 자동 판단하거나 한도를 자동 상향하지 않습니다.
+
+버킷 용량과 초당 greedy 리필량은 해당 설정값이며 기존 제한 대기·1회 재소비·캐시 fallback·429/Retry-After를 유지합니다.
+호출 실패 시 예산은 환급하지 않으며, 캐시 우선 경로의 적중은 예산을 소비하지 않습니다.
+대역 테스트는 고정 단조 시각으로 범위 분리·자격증명 변경·리필·동시 최초 요청을 확인하고,
+기존 1회 대기의 성공/인터럽트·실제 서비스의 토큰/HTTP 차단·설정 스냅샷과 기존 REST 응답도 검증합니다.
+개발 properties·DB·실제 Redis/증권사·WS·전체 앱 context는 로드하지 않습니다.
+토큰/approval 발급·마스터 다운로드·다른 JVM/프로그램의 호출은 공유하지 않으며, 재시작 시 JVM 예산은 초기화됩니다.
+실제 증권사의 제한 집계 방식·다른 프로그램의 동시 사용·전체 서버 기동은 별도 검증 범위입니다.
+이 회귀도 `Test-Trading.ps1`에 포함됩니다.

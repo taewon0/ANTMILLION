@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
 import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.ForeignerOrganization;
@@ -24,7 +25,6 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -68,7 +68,10 @@ public class KisInvestorFlowProviderTest {
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
-        limiter = new RateLimitedKisApiClient(redis);
+        config.accountNo = "synthetic-account";
+        config.acntPrdtCd = "01";
+        limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
+        baseUrlReads = 0;
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null, null,
                 null, new KisFrgnOrgnRedisRepository(redis, new ObjectMapper()), null, limiter);
         provider = new KisInvestorFlowProvider(legacy);
@@ -100,7 +103,7 @@ public class KisInvestorFlowProviderTest {
         redis.values.put(KEY, Map.of("frgn_fake_ntby_qty", ""));
         assertEquals(new InvestorFlow("", null, null), provider.getInvestorFlow("000001"));
         assertTrue(redis.ttls.isEmpty());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -208,7 +211,7 @@ public class KisInvestorFlowProviderTest {
         assertEquals("+0012", provider.getInvestorFlow("000001").getForeignNetQuantity());
         baseUrl = second;
         assertEquals("-12", provider.getInvestorFlow("000001").getForeignNetQuantity());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertEquals(2, redis.ttls.size());
         server.verify();
     }
@@ -309,7 +312,7 @@ public class KisInvestorFlowProviderTest {
         Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(Math.max(1, remaining))
                 .refillIntervally(Math.max(1, remaining), Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
-        ReflectionTestUtils.setField(limiter, "bucket", budget);
+        KisRateLimitTestSupport.fixedCacheBudget(limiter, budget);
     }
 
     private static class MemoryRedis extends RedisTemplate<String, Object> {

@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
 import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.MarketIndexPrice;
@@ -25,7 +26,6 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
@@ -73,7 +73,9 @@ public class KisMarketIndexChartProviderTest {
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
-        limiter = new RateLimitedKisApiClient(redis);
+        config.accountNo = "synthetic-account";
+        config.acntPrdtCd = "01";
+        limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         charts = new KisMarketIndexChartRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null,
                 charts, null, null, null, limiter);
@@ -131,7 +133,7 @@ public class KisMarketIndexChartProviderTest {
         assertEquals(List.of(new MarketIndexCandle("20261021", "02500.50", null, null, null),
                 new MarketIndexCandle("20261020", "", null, null, null)), provider.getMarketIndexChart(request("0001")));
         assertTrue(redis.ttls.isEmpty());
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -166,7 +168,7 @@ public class KisMarketIndexChartProviderTest {
         assertTrue(provider.getMarketIndexChart(request("0001")).isEmpty());
         assertEquals(List.of(), redis.values.get(key("0001")));
         assertEquals(Long.valueOf(60), redis.ttls.get(key("0001")));
-        assertEquals(0, limiter.getAvailableTokens());
+        assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         server.verify();
     }
 
@@ -357,7 +359,7 @@ public class KisMarketIndexChartProviderTest {
         Bucket budget = Bucket.builder().addLimit(Bandwidth.builder().capacity(1)
                 .refillIntervally(1, Duration.ofDays(1)).build()).build();
         if (remaining == 0) budget.tryConsume(1);
-        ReflectionTestUtils.setField(limiter, "bucket", budget);
+        KisRateLimitTestSupport.fixedCacheBudget(limiter, budget);
     }
 
     private static class MemoryRedis extends RedisTemplate<String, Object> {

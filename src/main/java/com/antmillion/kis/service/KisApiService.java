@@ -48,16 +48,20 @@ public class KisApiService {
     // Bucket4j으로 한국투자증권 api 유량 제어
     private final RateLimitedKisApiClient rateLimitedClient;
 
+    private KisRestRequestScope requestScope() {
+        return new KisRestRequestScope(config.getBaseUrl(), config.accountNo, config.acntPrdtCd,
+                config.appKey, config.appSecret);
+    }
+
     /**
      * KIS 액세스 토큰 조회/발급
      * Redis에 유효한 토큰이 있으면 반환, 없으면 신규 발급 후 Redis에 저장
      */
     public String getKisAccessToken() {
-        return getKisAccessToken(config.getBaseUrl());
+        return getKisAccessToken(new KisAccessTokenScope(config.getBaseUrl(), config.appKey, config.appSecret));
     }
 
-    private String getKisAccessToken(String baseUrl) {
-        KisAccessTokenScope scope = new KisAccessTokenScope(baseUrl, config.appKey, config.appSecret);
+    private String getKisAccessToken(KisAccessTokenScope scope) {
         // Redis에서 토큰 조회
         Optional<String> saved = kisAccessTokenRedisRepository.findAccessToken(scope);
         if (saved.isPresent()) {
@@ -170,7 +174,8 @@ public class KisApiService {
      * @return 캔들 차트 데이터 리스트
      */
     public List<ChartStockPrice> getPeriodStockPrices(ChartStockPriceRequest request) {
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         //Redis에 있는지 먼저 확인
         Optional<List<ChartStockPrice>> cached = kisChartRedisRepository.getChartData(baseUrl, request);
 
@@ -180,7 +185,7 @@ public class KisApiService {
         }
 
         log.info("한국투자증권 기간별 시세 api 호출");
-        KisChartStockPriceResponse response = periodStockPricesAPI(request);
+        KisChartStockPriceResponse response = periodStockPricesAPI(scope, request);
         kisChartRedisRepository.save(baseUrl, request, response.getOutput2());
         return response.getOutput2();
     }
@@ -190,17 +195,18 @@ public class KisApiService {
      * @param request  조회 조건 (종목코드, 기간, 날짜 등)
      * @return 한국투자증권 API 반환값
      */
-    private KisChartStockPriceResponse periodStockPricesAPI(ChartStockPriceRequest request) {
+    private KisChartStockPriceResponse periodStockPricesAPI(KisRestRequestScope scope, ChartStockPriceRequest request) {
         // Rate Limit + 캐싱 적용
         return rateLimitedClient.callWithCache(
+                scope,
                 null,
                 () -> {
                     //1.접근 토큰 얻기
-                    String token = getKisAccessToken();
+                    String token = getKisAccessToken(scope.getTokenScope());
                     //2.헤더 설정
-                    HttpHeaders headers = createApiHeader(token, "FHKST03010100");
+                    HttpHeaders headers = createApiHeader(token, scope, "FHKST03010100");
                     //3.URL 생성
-                    String url = buildPeriodApiUrl(request);
+                    String url = buildPeriodApiUrl(scope.getBaseUrl(), request);
                     //4.API 호출
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<KisChartStockPriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, KisChartStockPriceResponse.class);
@@ -220,8 +226,8 @@ public class KisApiService {
      * @param request  조회 조건 (종목코드, 기간, 날짜 등)
      * @return 한국투자증권 API URL
      */
-    private String buildPeriodApiUrl(ChartStockPriceRequest request) {
-        final URI uri = URI.create(config.getBaseUrl() + KisApiConstant.PERIOD_PRICE_PATH);
+    private String buildPeriodApiUrl(String baseUrl, ChartStockPriceRequest request) {
+        final URI uri = URI.create(baseUrl + KisApiConstant.PERIOD_PRICE_PATH);
         return UriComponentsBuilder
                 .fromUri(uri)
                 .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
@@ -239,12 +245,12 @@ public class KisApiService {
      * @param trId 거래 id
      * @return 한국투자증권 api 요청 헤더
      */
-    private HttpHeaders createApiHeader(String token, String trId) {
+    private HttpHeaders createApiHeader(String token, KisRestRequestScope scope, String trId) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("content-type", "application/json; charset=utf-8");
         headers.setBearerAuth(token);
-        headers.set("appkey", config.appKey);
-        headers.set("appsecret", config.appSecret);
+        headers.set("appkey", scope.getTokenScope().getAppKey());
+        headers.set("appsecret", scope.getTokenScope().getAppSecret());
         headers.set("tr_id", trId);
         headers.set("custtype", "P");
         return headers;
@@ -257,7 +263,8 @@ public class KisApiService {
      * @return 코스피, 코스닥 캔들 차트 데이터 리스트
      */
     public List<MarketIndexPrice> getMarketIndexPrices(MarketIndexPriceRequest request) {
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         Optional<List<MarketIndexPrice>> cached = kisMarketIndexChartRepository.getChartData(baseUrl, request);
         if (cached.isPresent()) {
             log.info("{} 차트 데이터 재사용",  request.getIndexCode());
@@ -265,7 +272,7 @@ public class KisApiService {
         }
 
         log.info("한국투자증권 국내업종 일자별지수 api 호출");
-        KisMarketIndexPriceResponse response = marketIndexPricesAPI(request);
+        KisMarketIndexPriceResponse response = marketIndexPricesAPI(scope, request);
         kisMarketIndexChartRepository.save(baseUrl, request, response.getOutput2());
         return response.getOutput2();
     }
@@ -275,12 +282,13 @@ public class KisApiService {
      * @param request 조회 조건 (종목코드, 기간, 날짜 등)
      * @return 한국투자증권 api 반환값
      */
-    private KisMarketIndexPriceResponse marketIndexPricesAPI(MarketIndexPriceRequest request) {
+    private KisMarketIndexPriceResponse marketIndexPricesAPI(KisRestRequestScope scope, MarketIndexPriceRequest request) {
         return rateLimitedClient.callWithoutCache(
+                scope,
                 () -> {
-                    String token = getKisAccessToken();
-                    HttpHeaders headers = createApiHeader(token, "FHPUP02120000");
-                    String url = buildMarketIndexApiUrl(request);
+                    String token = getKisAccessToken(scope.getTokenScope());
+                    HttpHeaders headers = createApiHeader(token, scope, "FHPUP02120000");
+                    String url = buildMarketIndexApiUrl(scope.getBaseUrl(), request);
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<KisMarketIndexPriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, KisMarketIndexPriceResponse.class);
                     KisMarketIndexPriceResponse responseBody = response.getBody();
@@ -297,8 +305,8 @@ public class KisApiService {
      * @param request 조회 조건 (종목코드, 기간, 날짜 등)
      * @return 한국투자증권 국내업종 일자별지수 API URL
      */
-    private String buildMarketIndexApiUrl(MarketIndexPriceRequest request) {
-        final URI uri = URI.create(config.getBaseUrl() + KisApiConstant.MARKET_INDEX_PATH);
+    private String buildMarketIndexApiUrl(String baseUrl, MarketIndexPriceRequest request) {
+        final URI uri = URI.create(baseUrl + KisApiConstant.MARKET_INDEX_PATH);
         return UriComponentsBuilder
                 .fromUri(uri)
                 .queryParam("FID_PERIOD_DIV_CODE", request.getPeriodCode())
@@ -325,11 +333,12 @@ public class KisApiService {
      * 
      */
     private DayMinutePriceResponse dayMinutePricesAPI(DayMinutePriceRequest request) {
+        KisRestRequestScope scope = requestScope();
         // 캐시 없는 최근 분봉도 다른 KIS 시세 조회와 호출 예산을 공유합니다.
-        return rateLimitedClient.callWithoutCache(() -> {
-            String token = getKisAccessToken();
-            HttpHeaders headers = createApiHeader(token, "FHKST03010200");
-            String url = buildDayMinuteApiUrl(request);
+        return rateLimitedClient.callWithoutCache(scope, () -> {
+            String token = getKisAccessToken(scope.getTokenScope());
+            HttpHeaders headers = createApiHeader(token, scope, "FHKST03010200");
+            String url = buildDayMinuteApiUrl(scope.getBaseUrl(), request);
             HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
             ResponseEntity<DayMinutePriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, DayMinutePriceResponse.class);
             DayMinutePriceResponse responseBody = response.getBody();
@@ -345,9 +354,9 @@ public class KisApiService {
      * @param request 조회 조건 (분류코드, 종목코드, 시간 등)
      * @return 한국투자증권 국내업종 당일분봉조회 API URL
      */
-    private String buildDayMinuteApiUrl(DayMinutePriceRequest request) {
+    private String buildDayMinuteApiUrl(String baseUrl, DayMinutePriceRequest request) {
 		String now = LocalTime.now().format(DateTimeFormatter.ofPattern("HHmmss"));
-        final URI uri = URI.create(config.getBaseUrl() + KisApiConstant.DAY_MINUTE_PATH);
+        final URI uri = URI.create(baseUrl + KisApiConstant.DAY_MINUTE_PATH);
         return UriComponentsBuilder
                 .fromUri(uri)
                 .queryParam("FID_COND_MRKT_DIV_CODE", request.getCondMrktDivCode()) // 조건 시장 분류 코드(J : KRX)
@@ -364,7 +373,8 @@ public class KisApiService {
      * @return 거래량순 종목리스트 상위 30개
      */
     public List<StockVolumeRank> getStockVolumeRanks(StockVolumeRankRequest request) {
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         Optional<List<StockVolumeRank>> cached =  kisStockVolumeRankRedisRepository.getStockVolumeRanks(baseUrl, request);
         if (cached.isPresent()) {
             log.info("거래량 순위 데이터 재사용");
@@ -372,18 +382,19 @@ public class KisApiService {
         }
 
         log.info("한국투자증권 거래량순위 API 호출");
-        KisStockVolumeRankResponse response = stockVolumeRankAPI(request);
+        KisStockVolumeRankResponse response = stockVolumeRankAPI(scope, request);
         kisStockVolumeRankRedisRepository.save(baseUrl, request, response.getOutput());
         return  response.getOutput();
     }
 
-    private KisStockVolumeRankResponse stockVolumeRankAPI(StockVolumeRankRequest request) {
+    private KisStockVolumeRankResponse stockVolumeRankAPI(KisRestRequestScope scope, StockVolumeRankRequest request) {
         return rateLimitedClient.callWithCache(
+                scope,
                 null,
                 () -> {
-                    String token = getKisAccessToken();
-                    HttpHeaders headers = createApiHeader(token, "FHPST01710000");
-                    String url = buildStockVolumeRankUrl(request);
+                    String token = getKisAccessToken(scope.getTokenScope());
+                    HttpHeaders headers = createApiHeader(token, scope, "FHPST01710000");
+                    String url = buildStockVolumeRankUrl(scope.getBaseUrl(), request);
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<KisStockVolumeRankResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, KisStockVolumeRankResponse.class);
                     KisStockVolumeRankResponse responseBody = response.getBody();
@@ -396,8 +407,8 @@ public class KisApiService {
         );
     }
 
-    private String buildStockVolumeRankUrl(StockVolumeRankRequest request) {
-        final URI uri = URI.create(config.getBaseUrl() + KisApiConstant.STOCK_VOLUME_RANK);
+    private String buildStockVolumeRankUrl(String baseUrl, StockVolumeRankRequest request) {
+        final URI uri = URI.create(baseUrl + KisApiConstant.STOCK_VOLUME_RANK);
         return UriComponentsBuilder
                 .fromUri(uri)
                 .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
@@ -422,7 +433,8 @@ public class KisApiService {
     
     // Redis에 있는지 확인하고 반환, 만약 Redis에 데이터가 하나도 없으면 그때만 한투 api 직접호출
     public List<StreamMinutePrice> getStreamMinutePrices(StreamMinutePriceRequest request){
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
     	String stockCode = request.getInputIscd();
         Optional<List<StreamMinutePrice>> cachedMinute = kisChartRedisRepository.getStreamMinuteChartData(baseUrl, request);
     	
@@ -433,7 +445,7 @@ public class KisApiService {
     	
     	log.info("한국투자증권 일별 분봉 시세 api 호출: {}", stockCode);
     	
-        StreamMinutePriceResponse response = streamMinutePricesAPI(baseUrl, request);
+        StreamMinutePriceResponse response = streamMinutePricesAPI(scope, request);
     	
         // output2가 있으면 빈 목록도 기존 정책대로 저장합니다.
     	if (response != null && response.getOutput2() != null) {
@@ -452,14 +464,15 @@ public class KisApiService {
      * @return 일별분봉조회 데이터 리스트
      * 
      */
-    private StreamMinutePriceResponse streamMinutePricesAPI(String baseUrl, StreamMinutePriceRequest request) {
+    private StreamMinutePriceResponse streamMinutePricesAPI(KisRestRequestScope scope, StreamMinutePriceRequest request) {
         return rateLimitedClient.callWithCache(
+                scope,
                 null,
                 () -> {
-                    String token = getKisAccessToken(baseUrl);
-                    HttpHeaders headers = createApiHeader(token, "FHKST03010230");
+                    String token = getKisAccessToken(scope.getTokenScope());
+                    HttpHeaders headers = createApiHeader(token, scope, "FHKST03010230");
                     headers.set("tr_cont", "N"); // 연속 거래 여부
-                    String url = buildStreamMinuteApiUrl(baseUrl, request);
+                    String url = buildStreamMinuteApiUrl(scope.getBaseUrl(), request);
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<StreamMinutePriceResponse> response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, StreamMinutePriceResponse.class);
                     StreamMinutePriceResponse responseBody = response.getBody();
@@ -492,14 +505,16 @@ public class KisApiService {
 
     public Integer getCurrentPrice(CurrentPriceRequest request) {
         // 현재가는 실시간성이 중요하므로 캐싱 TTL 짧게
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         String cacheKey = buildCurrentPriceCacheKey("kis:price:single:v2", baseUrl, request);
 
         return rateLimitedClient.callWithCache(
+                scope,
                 cacheKey,
                 () -> {
-                    String token = getKisAccessToken(baseUrl);
-                    HttpHeaders headers = createApiHeader(token, "FHKST01010100");
+                    String token = getKisAccessToken(scope.getTokenScope());
+                    HttpHeaders headers = createApiHeader(token, scope, "FHKST01010100");
                     URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)
                             .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
@@ -523,7 +538,8 @@ public class KisApiService {
      * @return 외인/기관 가집계 리스트 (ForeignerOrganization 목록)
      */
     public ForeignerOrganization getForeignerOrganizationData(String stockCode) {
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         Optional<ForeignerOrganization> cached = kisFrgnOrgnRedisRepository.getKisFrgnorgnNtby(baseUrl, stockCode);
         if (cached.isPresent()) {
             log.info("외인/기관 수량(가집계) 재사용");
@@ -532,7 +548,7 @@ public class KisApiService {
         
         // 1. API 호출
     	log.info("한국투자증권 외인/기관 추정가집계 api 호출: {}", stockCode);
-        KisForeignerOrganizationResponse response = foreignerOrganizationAPI(baseUrl, stockCode);
+        KisForeignerOrganizationResponse response = foreignerOrganizationAPI(scope, stockCode);
         if(response.getOutput2().size() ==0){
         	return new ForeignerOrganization();
         }
@@ -545,16 +561,17 @@ public class KisApiService {
     /**
      * 한국투자증권 외인기관 추정가집계 API 호출 (내부 메서드)
      */
-    private KisForeignerOrganizationResponse foreignerOrganizationAPI(String baseUrl, String stockCode) {
+    private KisForeignerOrganizationResponse foreignerOrganizationAPI(KisRestRequestScope scope, String stockCode) {
         return rateLimitedClient.callWithCache(
+                scope,
                 null,
                 () -> {
                     // 1. 접근 토큰 얻기
-                    String token = getKisAccessToken(baseUrl);
+                    String token = getKisAccessToken(scope.getTokenScope());
                     // 2. 헤더 설정 (이미지 명세 실전 TR ID: HHPTJ04160200)
-                    HttpHeaders headers = createApiHeader(token, "HHPTJ04160200");
+                    HttpHeaders headers = createApiHeader(token, scope, "HHPTJ04160200");
                     // 3. URL 생성
-                    String url = buildForeignerOrganizationUrl(baseUrl, stockCode);
+                    String url = buildForeignerOrganizationUrl(scope.getBaseUrl(), stockCode);
                     // 4. API 호출
                     HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
                     ResponseEntity<KisForeignerOrganizationResponse> response =
@@ -582,14 +599,16 @@ public class KisApiService {
     }
 
     public CurrentPrice getCurrentPriceDetail(CurrentPriceRequest request) {
-        String baseUrl = config.getBaseUrl();
+        KisRestRequestScope scope = requestScope();
+        String baseUrl = scope.getBaseUrl();
         String cacheKey = buildCurrentPriceCacheKey("kis:price:detail:v2", baseUrl, request);
 
         return rateLimitedClient.callWithCache(
+                scope,
                 cacheKey,
                 () -> {
-                    String token = getKisAccessToken(baseUrl);
-                    HttpHeaders headers = createApiHeader(token, "FHKST01010100");
+                    String token = getKisAccessToken(scope.getTokenScope());
+                    HttpHeaders headers = createApiHeader(token, scope, "FHKST01010100");
                     URI uri = URI.create(baseUrl + KisApiConstant.PRESENT_PRICE);
                     String url = UriComponentsBuilder.fromUri(uri)
                             .queryParam("FID_COND_MRKT_DIV_CODE", request.getMarketCode())
