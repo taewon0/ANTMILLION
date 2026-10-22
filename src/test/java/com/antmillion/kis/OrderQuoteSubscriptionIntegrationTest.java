@@ -1,7 +1,8 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
-import com.antmillion.kis.manager.KisSubscriptionRegistry;
+import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
+import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.stock.dto.StockDTO;
 import com.antmillion.stock.mapper.StockOrderMapper;
 import com.antmillion.stock.scheduler.OrderQuoteSubscriptionScheduler;
@@ -214,7 +215,7 @@ public class OrderQuoteSubscriptionIntegrationTest {
 
     private OrderQuoteSubscriptionScheduler newScheduler(StockOrderMapper mapper) {
         return OrderQuoteSubscriptionSchedulerTest.scheduler(mapper,
-                wire.context.getBean(KisSubscriptionRegistry.class), transactionManager, worker);
+                wire.context.getBean(RealtimeSubscriptionRegistry.class), transactionManager, worker);
     }
 
     @Test
@@ -242,7 +243,7 @@ public class OrderQuoteSubscriptionIntegrationTest {
         try (KisWebSocketRecoveryTest.Manager manager = new KisWebSocketRecoveryTest.Manager(
                 new SimpMessagingTemplate(channel), engine)) {
             manager.market = LocalTime.of(15, 29, 59);
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             OrderQuoteSubscriptionSchedulerTest.Worker timer = new OrderQuoteSubscriptionSchedulerTest.Worker();
             OrderQuoteSubscriptionScheduler recovering = OrderQuoteSubscriptionSchedulerTest.scheduler(
                     orders, registry, transactionManager, timer);
@@ -311,7 +312,7 @@ public class OrderQuoteSubscriptionIntegrationTest {
         channel.subscribe(message -> { });
         try (KisWebSocketRecoveryTest.Manager manager = new KisWebSocketRecoveryTest.Manager(
                 new SimpMessagingTemplate(channel), engine)) {
-            KisSubscriptionRegistry registry = new KisSubscriptionRegistry(manager);
+            RealtimeSubscriptionRegistry registry = new RealtimeSubscriptionRegistry(new KisRealtimeSubscriptionProvider(manager));
             OrderQuoteSubscriptionSchedulerTest.Worker timer = new OrderQuoteSubscriptionSchedulerTest.Worker();
             OrderQuoteSubscriptionScheduler recovering = OrderQuoteSubscriptionSchedulerTest.scheduler(
                     orders, registry, transactionManager, timer);

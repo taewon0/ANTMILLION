@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
-import com.antmillion.kis.manager.KisSubscriptionRegistry;
+import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
+import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import org.junit.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -64,7 +65,7 @@ public class KisSubscriptionRegistryTest {
     }
 
     @Configuration
-    @Import(KisSubscriptionRegistry.class)
+    @Import({RealtimeSubscriptionRegistry.class, KisRealtimeSubscriptionProvider.class})
     static class Config {
         @Bean
         public Provider manager() { return new Provider(); }
@@ -285,7 +286,7 @@ public class KisSubscriptionRegistryTest {
     @Test
     public void pendingOrderKeepsQuotesAfterLastBrowserDisconnects() throws Exception {
         try (Wire wire = new Wire()) {
-            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            RealtimeSubscriptionRegistry registry = wire.context.getBean(RealtimeSubscriptionRegistry.class);
             WebSocketSession browser = wire.connect("browser");
             wire.subscribe(browser, "book", "ask-bid005930");
             registry.replaceOrderStocks(Set.of("005930"));
@@ -302,7 +303,7 @@ public class KisSubscriptionRegistryTest {
     @Test
     public void completingLastOrderPreservesBrowserAndOtherStocks() throws Exception {
         try (Wire wire = new Wire()) {
-            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            RealtimeSubscriptionRegistry registry = wire.context.getBean(RealtimeSubscriptionRegistry.class);
             registry.replaceOrderStocks(Set.of("005930", "000660"));
             WebSocketSession browser = wire.connect("browser");
             wire.subscribe(browser, "book", "ask-bid005930");
@@ -321,7 +322,7 @@ public class KisSubscriptionRegistryTest {
     @Test
     public void repeatedSnapshotsRetryFailedOrderAcquisitionWithoutLeakingReferences() {
         try (Wire wire = new Wire()) {
-            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            RealtimeSubscriptionRegistry registry = wire.context.getBean(RealtimeSubscriptionRegistry.class);
             wire.provider.failSubscribe = true;
             registry.replaceOrderStocks(Set.of("005930"));
             wire.provider.failSubscribe = false;
@@ -341,7 +342,7 @@ public class KisSubscriptionRegistryTest {
     @Test
     public void invalidSnapshotCannotDropExistingOrderReferences() {
         try (Wire wire = new Wire()) {
-            KisSubscriptionRegistry registry = wire.context.getBean(KisSubscriptionRegistry.class);
+            RealtimeSubscriptionRegistry registry = wire.context.getBean(RealtimeSubscriptionRegistry.class);
             registry.replaceOrderStocks(Set.of("005930"));
             assertThrows(IllegalArgumentException.class, () -> registry.replaceOrderStocks(Set.of("bad")));
             assertTrue(wire.provider.released.isEmpty());
@@ -353,7 +354,7 @@ public class KisSubscriptionRegistryTest {
     @Test
     public void mockProfileDoesNotAcquireRealSubscriptions() throws Exception {
         try (Wire wire = new Wire("dev-mock")) {
-            assertTrue(wire.context.getBeansOfType(KisSubscriptionRegistry.class).isEmpty());
+            assertTrue(wire.context.getBeansOfType(RealtimeSubscriptionRegistry.class).isEmpty());
             WebSocketSession a = wire.connect("a");
             wire.subscribe(a, "one", "present005930");
             wire.subscribe(a, "two", "ask-bid005930");

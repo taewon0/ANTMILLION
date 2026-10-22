@@ -1,4 +1,7 @@
-package com.antmillion.kis.manager;
+package com.antmillion.marketdata.service;
+
+import com.antmillion.marketdata.provider.RealtimeSubscriptionProvider;
+import com.antmillion.marketdata.provider.RealtimeSubscriptionProvider.Kind;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,14 +21,14 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 브라우저가 지정한 소유자 대신 서버의 STOMP 세션과 구독 ID로 KIS 구독 소유권을 관리합니다. */
+/** 브라우저가 지정한 소유자 대신 서버의 STOMP 세션과 구독 ID로 실시간 구독 소유권을 관리합니다. */
 @Slf4j
 @Component
 @Profile("!dev-mock")
 @RequiredArgsConstructor
-public class KisSubscriptionRegistry {
+public class RealtimeSubscriptionRegistry {
     private static final Pattern TOPIC = Pattern.compile("^/topic/kis-trade/(present|ask-bid)([A-Za-z0-9]{6})$");
-    private final KisWebSocketManager manager;
+    private final RealtimeSubscriptionProvider provider;
     private final Map<String, Map<String, String>> sessions = new HashMap<>();
     private final Map<String, SharedSubscription> subscriptions = new HashMap<>();
     private final Set<String> orderSubscriptions = new HashSet<>();
@@ -87,17 +90,17 @@ public class KisSubscriptionRegistry {
 
     private SharedSubscription shared(String destination, String kind, String stockCode) {
         return subscriptions.computeIfAbsent(destination, ignored -> new SharedSubscription(stockCode,
-                "present".equals(kind)));
+                "present".equals(kind) ? Kind.CURRENT_PRICE : Kind.ORDER_BOOK));
     }
 
     private void acquire(SharedSubscription shared) {
         if (shared.requested) return;
         try {
-            manager.subscribeCurrentMarket(shared.stockCode, shared.present);
+            provider.subscribe(shared.stockCode, shared.kind);
             shared.requested = true;
         } catch (RuntimeException e) {
             // STOMP 구독이 남아 있으므로 다음 획득 재시도를 위해 소유권을 유지합니다.
-            log.warn("KIS subscription acquisition failed: {}", e.getClass().getSimpleName());
+            log.warn("Realtime subscription acquisition failed: {}", e.getClass().getSimpleName());
         }
     }
 
@@ -122,22 +125,22 @@ public class KisSubscriptionRegistry {
             if (!shared.requested) return;
             try {
                 // TR 전환 여부와 무관하게 같은 종목·시세 종류의 마지막 참조를 해제합니다.
-                manager.unsubscribeCurrentMarket(shared.stockCode, shared.present);
+                provider.unsubscribe(shared.stockCode, shared.kind);
             } catch (RuntimeException e) {
-                log.warn("KIS subscription release failed: {}", e.getClass().getSimpleName());
+                log.warn("Realtime subscription release failed: {}", e.getClass().getSimpleName());
             }
         }
     }
 
     private static class SharedSubscription {
         private final String stockCode;
-        private final boolean present;
+        private final Kind kind;
         private int references;
         private boolean requested;
 
-        private SharedSubscription(String stockCode, boolean present) {
+        private SharedSubscription(String stockCode, Kind kind) {
             this.stockCode = stockCode;
-            this.present = present;
+            this.kind = kind;
         }
     }
 }

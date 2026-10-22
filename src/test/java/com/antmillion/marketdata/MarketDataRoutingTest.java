@@ -24,6 +24,7 @@ import com.antmillion.marketdata.provider.MarketIndexChartProvider;
 import com.antmillion.marketdata.provider.MinuteChartProvider;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
 import com.antmillion.marketdata.provider.StockRankingProvider;
+import com.antmillion.marketdata.provider.RealtimeSubscriptionProvider;
 import com.antmillion.marketdata.service.InvestorSignalService;
 import org.junit.Test;
 import org.springframework.beans.BeansException;
@@ -237,6 +238,15 @@ public class MarketDataRoutingTest {
                 null, null, null, null, null));
         context.register(KisMarketDataProviderConfig.class);
         context.register(ADAPTERS.toArray(new Class<?>[0]));
+        // 공통 패키지 스캔은 유지하며 REST 조회가 WS 요청을 발생시키면 실패합니다.
+        context.registerBean(RealtimeSubscriptionProvider.class, () -> new RealtimeSubscriptionProvider() {
+            @Override public void subscribe(String stockCode, Kind kind) {
+                throw new AssertionError("Unexpected realtime subscription from REST context");
+            }
+            @Override public void unsubscribe(String stockCode, Kind kind) {
+                throw new AssertionError("Unexpected realtime unsubscription from REST context");
+            }
+        });
         context.scan("com.antmillion.marketdata");
         return context;
     }
