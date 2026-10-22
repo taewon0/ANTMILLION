@@ -43,6 +43,7 @@ public class KisCurrentPriceProviderTest {
     private KisApiService legacy;
     private CurrentPriceProvider provider;
     private RateLimitedKisApiClient limiter;
+    private String baseUrl;
 
     @Before
     public void setUp() {
@@ -50,8 +51,9 @@ public class KisCurrentPriceProviderTest {
         redis.values.put("kis:access_token", "synthetic-token");
         rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).ignoreExpectOrder(true).build();
+        baseUrl = "https://kis.test";
         KisConfig config = new KisConfig() {
-            @Override public String getBaseUrl() { return "https://kis.test"; }
+            @Override public String getBaseUrl() { return baseUrl; }
         };
         config.appKey = "synthetic-key";
         config.appSecret = "synthetic-secret";
@@ -65,9 +67,9 @@ public class KisCurrentPriceProviderTest {
     public void singlePriceKeepsKrxRequestTokenAndIntegerCache() {
         expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"71000\",\"prdy_ctrt\":\"1.25\"}}");
         assertEquals(Integer.valueOf(71000), provider.getCurrentPrice("005930"));
-        assertEquals(71000, redis.values.get("current:price:005930"));
-        assertEquals(Long.valueOf(10), redis.ttls.get("current:price:005930"));
-        assertFalse(redis.values.containsKey("current:price:detail:005930"));
+        assertEquals(71000, redis.values.get(key(false)));
+        assertEquals(Long.valueOf(10), redis.ttls.get(key(false)));
+        assertFalse(redis.values.containsKey(key(true)));
         server.verify();
     }
 
@@ -81,12 +83,12 @@ public class KisCurrentPriceProviderTest {
         List<CurrentQuote> quotes = provider.getCurrentPrices(List.of("005930", "000660", "035420"));
         assertEquals(List.of(new CurrentQuote("005930", "071000", "-1.20"),
                 new CurrentQuote("035420", "0", null)), quotes);
-        CurrentPrice cached = (CurrentPrice) redis.values.get("current:price:detail:005930");
+        CurrentPrice cached = (CurrentPrice) redis.values.get(key(true));
         assertNull(cached.getStockName());
-        assertEquals(Long.valueOf(10), redis.ttls.get("current:price:detail:005930"));
+        assertEquals(Long.valueOf(10), redis.ttls.get(key(true)));
         cached.setCurrentPrice("changed");
         assertEquals("071000", quotes.get(0).getCurrentPrice());
-        assertFalse(redis.values.containsKey("current:price:005930"));
+        assertFalse(redis.values.containsKey(key(false)));
         server.verify();
     }
 
@@ -114,10 +116,10 @@ public class KisCurrentPriceProviderTest {
         cached.setStockCode("005930");
         cached.setStockName("캐시에 남은 이름");
         cached.setPrdyCtrt("+0.00");
-        redis.values.put("current:price:detail:005930", cached);
+        redis.values.put(key(true), cached);
         List<CurrentQuote> quotes = provider.getCurrentPrices(List.of("005930"));
         assertEquals(List.of(new CurrentQuote("005930", null, "+0.00")), quotes);
-        assertSame(cached, redis.values.get("current:price:detail:005930"));
+        assertSame(cached, redis.values.get(key(true)));
         assertEquals("캐시에 남은 이름", cached.getStockName());
         assertTrue(redis.ttls.isEmpty());
         server.verify();
@@ -133,11 +135,11 @@ public class KisCurrentPriceProviderTest {
 
     @Test
     public void remoteFailureDoesNotIntroduceNewStaleFallback() {
-        redis.values.put("current:price:005930", 1000);
+        redis.values.put(key(false), 1000);
         server.expect(request -> assertEquals(url("005930", "J"), request.getURI().toString()))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         assertThrows(HttpServerErrorException.class, () -> provider.getCurrentPrice("005930"));
-        assertEquals(1000, redis.values.get("current:price:005930"));
+        assertEquals(1000, redis.values.get(key(false)));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
@@ -164,9 +166,168 @@ public class KisCurrentPriceProviderTest {
         server.verify();
     }
 
+    @Test
+    public void singleJThenNxKeepsIndependentFallbacks() {
+        assertIndependentFallbacks(false, "J", "NX", false);
+    }
+
+    @Test
+    public void singleNxThenJKeepsIndependentFallbacks() {
+        assertIndependentFallbacks(false, "NX", "J", false);
+    }
+
+    @Test
+    public void detailJThenNxKeepsIndependentFallbacks() {
+        assertIndependentFallbacks(true, "J", "NX", false);
+    }
+
+    @Test
+    public void detailNxThenJKeepsIndependentFallbacks() {
+        assertIndependentFallbacks(true, "NX", "J", false);
+    }
+
+    @Test
+    public void singleEndpointsKeepIndependentFallbacks() {
+        assertIndependentFallbacks(false, "J", "J", true);
+    }
+
+    @Test
+    public void detailEndpointsKeepIndependentFallbacks() {
+        assertIndependentFallbacks(true, "J", "J", true);
+    }
+
+    private void assertIndependentFallbacks(boolean detail, String firstMarket, String secondMarket,
+                                            boolean changeEndpoint) {
+        expectQuote("005930", firstMarket, "{\"output\":{\"stck_prpr\":\"71000\"}}");
+        if (changeEndpoint) baseUrl = "https://virtual.kis.test";
+        expectQuote("005930", secondMarket, "{\"output\":{\"stck_prpr\":\"72000\"}}");
+        baseUrl = "https://kis.test";
+        useFixedBudget(1);
+        assertEquals("71000", loadPrice(detail, "005930", firstMarket));
+        if (changeEndpoint) baseUrl = "https://virtual.kis.test";
+        useFixedBudget(1);
+        assertEquals("72000", loadPrice(detail, "005930", secondMarket));
+        useFixedBudget(0);
+        redis.ttls.clear();
+        baseUrl = "https://kis.test";
+        assertEquals("71000", loadPrice(detail, "005930", firstMarket));
+        if (changeEndpoint) baseUrl = "https://virtual.kis.test";
+        assertEquals("72000", loadPrice(detail, "005930", secondMarket));
+        assertTrue(redis.ttls.isEmpty());
+        assertEquals(0, limiter.getAvailableTokens());
+        server.verify();
+    }
+
+    private String loadPrice(boolean detail, String code, String market) {
+        return detail ? legacy.getCurrentPriceDetail(request(code, market)).getCurrentPrice()
+                : legacy.getCurrentPrice(request(code, market)).toString();
+    }
+
+    @Test
+    public void singleAndDetailKeepIndependentTypesAndStockCodes() {
+        for (String code : List.of("005930", "000660")) {
+            expectQuote(code, "J", "{\"output\":{\"stck_prpr\":\"71000\"}}");
+            expectQuote(code, "J", "{\"output\":{\"stck_prpr\":\"072000\"}}");
+        }
+        for (String code : List.of("005930", "000660")) {
+            useFixedBudget(1);
+            assertEquals("71000", loadPrice(false, code, "J"));
+            useFixedBudget(1);
+            assertEquals("072000", loadPrice(true, code, "J"));
+        }
+        useFixedBudget(0);
+        for (String code : List.of("005930", "000660")) {
+            assertEquals("71000", loadPrice(false, code, "J"));
+            assertEquals("072000", loadPrice(true, code, "J"));
+        }
+        assertTrue(redis.values.get(key(false)) instanceof Integer);
+        assertTrue(redis.values.get(key(true)) instanceof CurrentPrice);
+        assertEquals(4, redis.ttls.size());
+        assertTrue(redis.ttls.values().stream().allMatch(ttl -> ttl == 10));
+        server.verify();
+    }
+
+    @Test
+    public void legacyAndOtherProviderKeysAreNotReadOrModified() {
+        Map<String, Object> previous = Map.of(
+                "current:price:005930", 1,
+                "current:price:detail:005930", new CurrentPrice(),
+                key(false).replace("kis:", "kiwoom:"), 2,
+                key(true).replace("kis:", "kiwoom:"), new CurrentPrice());
+        redis.values.putAll(previous);
+        useFixedBudget(0);
+        assertThrows(RateLimitExceededException.class, () -> loadPrice(false, "005930", "J"));
+        assertThrows(RateLimitExceededException.class, () -> loadPrice(true, "005930", "J"));
+        previous.forEach((oldKey, value) -> assertSame(value, redis.values.get(oldKey)));
+        assertTrue(redis.ttls.isEmpty());
+        expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"71000\"}}");
+        expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"71000\"}}");
+        for (boolean detail : new boolean[]{false, true}) {
+            useFixedBudget(1);
+            assertEquals("71000", loadPrice(detail, "005930", "J"));
+        }
+        previous.forEach((oldKey, value) -> {
+            assertSame(value, redis.values.get(oldKey));
+            assertFalse(redis.ttls.containsKey(oldKey));
+        });
+        assertEquals(2, redis.ttls.size());
+        server.verify();
+    }
+
+    @Test
+    public void availableBudgetStillCallsRemoteInsteadOfReadingCache() {
+        for (boolean detail : new boolean[]{false, true}) {
+            expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"71000\"}}");
+            expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"72000\"}}");
+        }
+        for (boolean detail : new boolean[]{false, true}) {
+            useFixedBudget(1);
+            assertEquals("71000", loadPrice(detail, "005930", "J"));
+            useFixedBudget(1);
+            assertEquals("72000", loadPrice(detail, "005930", "J"));
+            useFixedBudget(0);
+            assertEquals("72000", loadPrice(detail, "005930", "J"));
+        }
+        server.verify();
+    }
+
+    @Test
+    public void delimiterNullAndEmptyConditionsKeepIndependentFallbacks() {
+        List<CurrentPriceRequest> requests = List.of(request("005930", "J:X"), request("X:005930", "J"),
+                request("005930", null), request("005930", ""), request("005930", "null"));
+        for (boolean detail : new boolean[]{false, true}) {
+            for (int i = 0; i < requests.size(); i++) {
+                CurrentPriceRequest request = requests.get(i);
+                expectQuote(request.getStockCode(), request.getMarketCode(),
+                        "{\"output\":{\"stck_prpr\":\"" + (71000 + i) + "\"}}");
+            }
+        }
+        for (boolean detail : new boolean[]{false, true}) {
+            for (int i = 0; i < requests.size(); i++) {
+                CurrentPriceRequest request = requests.get(i);
+                useFixedBudget(1);
+                assertEquals(String.valueOf(71000 + i),
+                        loadPrice(detail, request.getStockCode(), request.getMarketCode()));
+            }
+            useFixedBudget(0);
+            for (int i = 0; i < requests.size(); i++) {
+                CurrentPriceRequest request = requests.get(i);
+                assertEquals(String.valueOf(71000 + i),
+                        loadPrice(detail, request.getStockCode(), request.getMarketCode()));
+            }
+        }
+        assertEquals(10, redis.ttls.size());
+        server.verify();
+    }
+
+    private String key(boolean detail) {
+        return "kis:price:" + (detail ? "detail" : "single") + ":v2:16:https://kis.test:1:J:6:005930";
+    }
+
     private void expectQuote(String code, String market, String json) {
+        String expectedUrl = url(code, market);
         server.expect(request -> {
-            assertEquals(url(code, market), request.getURI().toString());
+            assertEquals(expectedUrl, request.getURI().toString());
             assertEquals(HttpMethod.GET, request.getMethod());
             assertEquals("Bearer synthetic-token", request.getHeaders().getFirst("Authorization"));
             assertEquals("synthetic-key", request.getHeaders().getFirst("appkey"));
@@ -177,8 +338,8 @@ public class KisCurrentPriceProviderTest {
     }
 
     private String url(String code, String market) {
-        return "https://kis.test/uapi/domestic-stock/v1/quotations/inquire-price"
-                + "?FID_COND_MRKT_DIV_CODE=" + market + "&FID_INPUT_ISCD=" + code;
+        return baseUrl + "/uapi/domestic-stock/v1/quotations/inquire-price"
+                + "?FID_COND_MRKT_DIV_CODE" + (market == null ? "" : "=" + market) + "&FID_INPUT_ISCD=" + code;
     }
 
     private CurrentPriceRequest request(String code, String market) {
