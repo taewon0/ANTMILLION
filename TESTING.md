@@ -232,4 +232,33 @@ KIS 현재가의 정확히 `"0"`인 값 제외와 잘못된 프레임의 메시�
 Handler의 현재 세션 검사·ACK·heartbeat·복원 정책은 변경하지 않습니다.
 위 테스트는 합성 프레임·공통 DTO·메모리 방송/체결 대역만 사용하며 개발 properties·DB·실제 외부 API를 로드하지 않습니다.
 `Test-Trading.ps1`에는 이 회귀와 KIS 프레임 없이 공통 호가로 실제 격리 DB의 양방향 체결을 확인하는 통합 테스트도 포함됩니다.
-WS Provider 선택·Kiwoom·실제 서버/브라우저/증권사 수신 검증은 후속 범위입니다.
+Kiwoom·실제 서버/브라우저/증권사 수신 검증은 후속 범위입니다.
+
+WS Provider 선택·지원 기능과 미선택 KIS의 수명 관리는 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=RealtimeRoutingTest,MarketDataRoutingTest,RealtimeSubscriptionProviderTest,RealtimeMarketDataServiceTest,KisRealtimeMessageAdapterTest,KisWebSocketRecoveryTest,KisSubscriptionRegistryTest,OrderQuoteSubscriptionSchedulerTest,MockDevelopmentModeTest' test
+```
+
+`marketdata.realtime-provider`는 WS 구독 Provider를 기동 시 선택하며 미설정 기본값은 `kis`입니다.
+기존 `db.properties`의 동일 키 또는 JVM 옵션 `-Dmarketdata.realtime-provider=kis`로 설정합니다.
+JVM 옵션이 파일보다 우선하며 변경 후 재시작해야 합니다. REST의 `marketdata.provider`와 독립적입니다.
+`RealtimeProviderRegistration`에 구독 구현과 지원 종류를 등록합니다. 현재 화면과 주문은
+`CURRENT_PRICE`와 `ORDER_BOOK`이 모두 필요하므로 선택한 Provider가 하나라도 지원하지 않으면 기동에 실패합니다.
+빈 값·미등록 식별자·중복 등록도 기동 실패로 처리합니다. 현재 운영 등록은 KIS뿐이며 `alternate`는 테스트 대역입니다.
+
+| WS 종류 | KIS 지원 범위 |
+|---|---|
+| `CURRENT_PRICE` | 기존 KRX/통합 현재가 희망 구독·수신 |
+| `ORDER_BOOK` | 기존 KRX/통합 5단계 호가 희망 구독·수신 |
+
+선택한 구독 구현을 화면·주문 참조 Registry에 우선 주입하며 기존 STOMP 토픽과 수신 DTO/방송·체결 순서를 유지합니다.
+KIS Manager는 같은 placeholder를 한 번 주입받고 미선택 시 worker·handshake executor를 시작하지 않습니다.
+따라서 KIS approval/handshake도 시작하지 않습니다. `dev-mock`에서는 WS 선택·등록·소유권 bean을 제외하고 Manager를 시작하지 않습니다.
+KIS REST·Redis 구성·마스터 동기화의 생성/실행은 이 WS 선택의 제어 범위가 아닙니다.
+새 Provider는 자체 연결·수신·복원 수명도 선택에 맞게 제어하고, 현재 연결의 메시지를 공통 `RealtimeMarketDataReceiver`에 전달해야 합니다.
+동적 전환·자동 장애 전환·Kiwoom·토큰/캐시/제한/CB 정책은 추가하지 않습니다.
+
+테스트는 실제 선택·KIS 등록 구성과 Manager, 합성 Provider/STOMP 이벤트를 사용합니다.
+선택된 KIS의 worker는 외부 구독 없이 시작/종료하며, 미선택 KIS는 희망 구독이 있어도 worker 생성·approval·handshake가 0인지 확인합니다.
+개발 properties·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다. Java 회귀는 `Test-Trading.ps1`에도 포함됩니다.

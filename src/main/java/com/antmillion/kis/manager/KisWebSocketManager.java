@@ -7,6 +7,7 @@ import com.antmillion.kis.service.KisApiService;
 import com.antmillion.marketdata.provider.RealtimeMarketDataReceiver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.core.env.Environment;
@@ -45,6 +46,9 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     // 응답에는 요청 ID가 없습니다. 같은 연결에서 같은 구독을 다시 보내지 않습니다.
     private final Set<String> attempted = new HashSet<>();
     private Environment environment;
+    // Registry와 같은 placeholder로 한 번 주입하며 실행 중 설정 변경은 적용하지 않습니다.
+    @Value("${marketdata.realtime-provider:kis}")
+    private String realtimeProviderId = "kis";
     private ThreadPoolTaskScheduler scheduler;
     private ThreadPoolTaskExecutor handshakeExecutor;
     private ScheduledFuture<?> task;
@@ -72,7 +76,8 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     @Override
     public void start() {
         synchronized (state) {
-            if (running || (environment != null && environment.acceptsProfiles(Profiles.of("dev-mock")))) return;
+            if (running || !"kis".equals(realtimeProviderId)
+                    || (environment != null && environment.acceptsProfiles(Profiles.of("dev-mock")))) return;
             long timeout = environment == null ? 90000
                     : environment.getProperty("kis.websocket.receive-timeout-millis", Long.class, 90000L);
             if (timeout <= acknowledgementTimeoutMillis()) {

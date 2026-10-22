@@ -32,3 +32,7 @@ mail.verify.verified-ttl-seconds=1800
 stock.sync.enabled=false
 stock.sync.cron=0 0 18 * * *
 stock.sync.zone=Asia/Seoul
+
+# REST와 WS는 각각 기동 시 선택하며 변경 후에는 재시작합니다. 현재 등록은 KIS뿐입니다.
+marketdata.provider=kis
+marketdata.realtime-provider=kis
