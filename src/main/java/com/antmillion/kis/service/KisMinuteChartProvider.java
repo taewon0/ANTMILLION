@@ -38,7 +38,7 @@ public class KisMinuteChartProvider implements MinuteChartProvider {
 
     @Override
     public List<RecentMinuteCandle> getRecentMinutes(String stockCode) {
-        // 당일 최근 분봉은 기존 서비스의 현재 시각·직접 HTTP 경로와 숫자 가격을 유지합니다.
+        // 당일 최근 분봉은 기존 서비스의 현재 시각·공유 호출 제한과 숫자 가격을 사용합니다.
         List<DayMinutePrice> prices = kisApiService.getDayMinutePrices(DayMinutePriceRequest.builder()
                 .condMrktDivCode("J")
                 .inputIscd(stockCode)

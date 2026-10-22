@@ -1,6 +1,8 @@
 package com.antmillion.kis;
 
+import com.antmillion.config.GlobalExceptionHandler;
 import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.controller.KisController;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.StreamMinutePrice;
 import com.antmillion.kis.dto.StreamMinutePriceRequest;
@@ -14,6 +16,7 @@ import com.antmillion.marketdata.dto.MinuteCandle;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
 import com.antmillion.marketdata.dto.RecentMinuteCandle;
 import com.antmillion.marketdata.provider.MinuteChartProvider;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -25,8 +28,10 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -44,6 +49,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 /** 실제 외부 연결 없이 HTTP·메모리 Redis 대역으로 기존 분봉 동작을 검증합니다. */
 public class KisMinuteChartProviderTest {
@@ -260,13 +266,14 @@ public class KisMinuteChartProviderTest {
                 CurrentPriceRequest.builder().stockCode("000660").marketCode("J").build()));
         assertThrows(RateLimitExceededException.class, () -> provider.getDailyMinutes(
                 new MinuteChartRequest("000660", request().getDate())));
+        assertThrows(RateLimitExceededException.class, () -> provider.getRecentMinutes("005930"));
         assertEquals(3, provider.getDailyMinutes(request()).size());
         server.verify();
     }
 
     @Test
-    public void recentKeepsCurrentServerTimeNumericDefaultsOrderAndExistingLimiterBypass() {
-        useFixedBudget(0);
+    public void recentKeepsCurrentServerTimeNumericDefaultsAndOrderWhileConsumingEachCall() {
+        useFixedBudget(2);
         LocalTime before = LocalTime.now().withNano(0);
         expectRecent(RECENT, before);
         expectRecent(RECENT, before);
@@ -274,6 +281,7 @@ public class KisMinuteChartProviderTest {
                 new RecentMinuteCandle("153000", 71000, 70000, 72000, 69000),
                 new RecentMinuteCandle("152900", 0, 0, 0, 0), null);
         assertEquals(expected, provider.getRecentMinutes("005930"));
+        assertEquals(1, limiter.getAvailableTokens());
         assertEquals(expected, provider.getRecentMinutes("005930"));
         assertEquals(0, limiter.getAvailableTokens());
         assertTrue(redis.ttls.isEmpty());
@@ -281,7 +289,50 @@ public class KisMinuteChartProviderTest {
     }
 
     @Test
+    public void recentRejectsExhaustedBudgetBeforeTokenLookupOrHttp() {
+        useFixedBudget(0);
+        redis.values.clear();
+        assertThrows(RateLimitExceededException.class, () -> provider.getRecentMinutes("005930"));
+        assertEquals(0, redis.reads);
+        assertTrue(redis.ttls.isEmpty());
+        server.verify();
+    }
+
+    @Test
+    public void recentSharesBudgetWithCurrentPriceAndDailyMinutes() {
+        useFixedBudget(1);
+        expectRecent(RECENT, LocalTime.now().withNano(0));
+        provider.getRecentMinutes("005930");
+        assertEquals(0, limiter.getAvailableTokens());
+        assertThrows(RateLimitExceededException.class, () -> legacy.getCurrentPrice(
+                CurrentPriceRequest.builder().stockCode("000660").marketCode("J").build()));
+        assertThrows(RateLimitExceededException.class, () -> provider.getDailyMinutes(request()));
+        assertTrue(redis.ttls.isEmpty());
+        server.verify();
+    }
+
+    @Test
+    public void recentRealServiceReturnsExisting429BodyAndRetryAfterWithoutHttp() throws Exception {
+        useFixedBudget(0);
+        MockHttpServletResponse response = MockMvcBuilders.standaloneSetup(
+                new KisController(null, null, null, provider, null, null))
+                .setControllerAdvice(new GlobalExceptionHandler()).build()
+                .perform(get("/api/kis/candle/005930")).andReturn().getResponse();
+        assertEquals(429, response.getStatus());
+        JsonNode body = new ObjectMapper().readTree(response.getContentAsByteArray());
+        assertEquals(3, body.size());
+        assertEquals("Rate limit exceeded", body.get("error").asText());
+        assertEquals("한국투자증권 API 호출 한도 초과. 잠시 후 다시 시도해주세요.", body.get("message").asText());
+        assertTrue(body.get("retryAfter").asLong() > 0);
+        assertEquals(body.get("retryAfter").asText(), response.getHeader("Retry-After"));
+        assertEquals(0, redis.reads);
+        assertTrue(redis.ttls.isEmpty());
+        server.verify();
+    }
+
+    @Test
     public void recentKeepsNullOrEmptyOutputAndMissingBodyFailure() {
+        useFixedBudget(4);
         LocalTime before = LocalTime.now().withNano(0);
         expectRecent("{}", before);
         expectRecent("{\"output2\":null}", before);
@@ -292,19 +343,24 @@ public class KisMinuteChartProviderTest {
         assertNull(provider.getRecentMinutes("005930"));
         assertEquals(List.of(), provider.getRecentMinutes("005930"));
         assertThrows(RuntimeException.class, () -> provider.getRecentMinutes("005930"));
+        assertEquals(0, limiter.getAvailableTokens());
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
 
     @Test
     public void bothRemoteFailuresPropagateWithoutRetryOrCacheWrite() {
+        useFixedBudget(2);
         server.expect(req -> assertDailyUrl(req.getURI().toString(), "J", "153000", "N", "", "20261021"))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         LocalTime before = LocalTime.now().withNano(0);
         server.expect(req -> assertRecentUrl(req.getURI().toString(), before))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         assertThrows(HttpServerErrorException.class, () -> provider.getDailyMinutes(request()));
+        assertEquals(1, limiter.getAvailableTokens());
         assertThrows(HttpServerErrorException.class, () -> provider.getRecentMinutes("005930"));
+        assertEquals(0, limiter.getAvailableTokens());
+        assertThrows(RateLimitExceededException.class, () -> provider.getRecentMinutes("005930"));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
@@ -418,13 +474,17 @@ public class KisMinuteChartProviderTest {
     private static class MemoryRedis extends RedisTemplate<String, Object> {
         final Map<String, Object> values = new ConcurrentHashMap<>();
         final Map<String, Long> ttls = new ConcurrentHashMap<>();
+        int reads;
 
         @Override
         @SuppressWarnings("unchecked")
         public ValueOperations<String, Object> opsForValue() {
             return (ValueOperations<String, Object>) Proxy.newProxyInstance(ValueOperations.class.getClassLoader(),
                     new Class<?>[]{ValueOperations.class}, (proxy, method, args) -> {
-                        if ("get".equals(method.getName())) return values.get(args[0]);
+                        if ("get".equals(method.getName())) {
+                            reads++;
+                            return values.get(args[0]);
+                        }
                         if ("set".equals(method.getName()) && args.length == 4) {
                             values.put((String) args[0], args[1]);
                             ttls.put((String) args[0], ((TimeUnit) args[3]).toSeconds((Long) args[2]));
