@@ -165,11 +165,9 @@ public class KisApiService {
      * @return 캔들 차트 데이터 리스트
      */
     public List<ChartStockPrice> getPeriodStockPrices(ChartStockPriceRequest request) {
+        String baseUrl = config.getBaseUrl();
         //Redis에 있는지 먼저 확인
-        Optional<List<ChartStockPrice>> cached = kisChartRedisRepository.getChartData(
-                request.getStockCode(),
-                request.getPeriodCode()
-        );
+        Optional<List<ChartStockPrice>> cached = kisChartRedisRepository.getChartData(baseUrl, request);
 
         if (cached.isPresent()) {
             log.info("기간별 차트 데이터 재사용");
@@ -178,7 +176,7 @@ public class KisApiService {
 
         log.info("한국투자증권 기간별 시세 api 호출");
         KisChartStockPriceResponse response = periodStockPricesAPI(request);
-        kisChartRedisRepository.save(request.getStockCode(), request.getPeriodCode(), response.getOutput2());
+        kisChartRedisRepository.save(baseUrl, request, response.getOutput2());
         return response.getOutput2();
     }
 
