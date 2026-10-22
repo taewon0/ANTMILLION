@@ -1,6 +1,7 @@
 package com.antmillion.stock.service;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
+import com.antmillion.marketdata.service.RealtimeMarketDataService;
 import com.antmillion.stock.mapper.AssetMapper;
 import com.antmillion.stock.dto.TradeLogDTO;
 import com.antmillion.stock.mapper.RealizedPnlMapper;
@@ -340,7 +341,7 @@ public class TradingExecutionAtomicityTest {
         channel.subscribe(broadcasts::add);
         // 합성 텍스트 프레임과 메모리 STOMP 채널만 사용하며 외부 웹소켓 관리자는 시작하지 않습니다.
         KisWebSocketHandler handler = new KisWebSocketHandler(null, null,
-                new SimpMessagingTemplate(channel), null, engine);
+                new RealtimeMarketDataService(new SimpMessagingTemplate(channel), engine), 0);
         handler.handleMessage(null, new TextMessage("0|" + trId + "|001|" + String.join("^", fields)));
         assertEquals(1, broadcasts.size());
         Map<?, ?> payload = (Map<?, ?>) broadcasts.get(0).getPayload();

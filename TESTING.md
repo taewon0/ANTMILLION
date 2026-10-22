@@ -216,3 +216,20 @@ node --test scripts/tests/investor-signal.test.cjs
 공통 신호등 서비스·독립 MVC와 세 화면의 실제 JS 함수를 대역에서 검증합니다.
 개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
 Java 회귀는 `Test-Trading.ps1`에도 포함됩니다.
+
+실시간 수신 변환과 공통 방송·체결 전달은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisRealtimeMessageAdapterTest,RealtimeMarketDataServiceTest,KisWebSocketRecoveryTest,MarketDataRoutingTest' test
+```
+
+`KisRealtimeMessageAdapter`가 KRX/통합 현재가·호가 프레임을 공통 불변 DTO로 변환하고,
+`RealtimeMarketDataReceiver`의 구현인 `RealtimeMarketDataService`가 기존 STOMP 토픽·문자열 필드를 방송합니다.
+호가는 매도·매수 각각 최우선부터 5단계이며, 방송 후 BUY에 최우선 매도호가·잔량을,
+SELL에 최우선 매수호가·잔량을 순서대로 전달합니다. 숫자는 trim 후 int로 변환하며
+빈 값·잘못된 값·범위 초과는 기존처럼 0으로 전달합니다. BUY 실패 시 SELL은 호출하지 않습니다.
+KIS 현재가의 정확히 `"0"`인 값 제외와 잘못된 프레임의 메시지별 예외 경계도 유지합니다.
+Handler의 현재 세션 검사·ACK·heartbeat·복원 정책은 변경하지 않습니다.
+위 테스트는 합성 프레임·공통 DTO·메모리 방송/체결 대역만 사용하며 개발 properties·DB·실제 외부 API를 로드하지 않습니다.
+`Test-Trading.ps1`에는 이 회귀와 KIS 프레임 없이 공통 호가로 실제 격리 DB의 양방향 체결을 확인하는 통합 테스트도 포함됩니다.
+WS Provider 선택·Kiwoom·실제 서버/브라우저/증권사 수신 검증은 후속 범위입니다.
