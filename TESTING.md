@@ -212,8 +212,10 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisInvestorFlowProviderTes
 node --test scripts/tests/investor-signal.test.cjs
 ```
 
-원본 가집계 문자열·첫 행 선택·종목별 600초 캐시·공유 호출 제한과 기존 URL/JSON,
+원본 가집계 문자열·첫 행 선택·Provider/실제 요청 환경/종목별 600초 캐시·공유 호출 제한과 기존 URL/JSON,
 동반 매수/매도·혼조/0·누락 값·숫자 변환 오류·429 응답을 확인합니다.
+환경 양방향 혼용 방지·동일 조건 재사용·구분자/null/빈 조건 비충돌과 기존 키 미사용도 확인합니다.
+캐시 조회·HTTP 요청·저장은 같은 base URL을 사용하며 이전 키는 자연 만료시킵니다.
 실제 서비스·repository·limiter는 HTTP·메모리 Redis 대역만 사용하며,
 공통 신호등 서비스·독립 MVC와 세 화면의 실제 JS 함수를 대역에서 검증합니다.
 개발 설정·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다.
