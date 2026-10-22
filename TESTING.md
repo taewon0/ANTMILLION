@@ -172,6 +172,37 @@ node --test scripts/tests/minute-chart.test.cjs scripts/tests/period-chart.test.
 일별 분봉 캐시가 요청 일자 대신 서버 오늘 날짜를 쓰는 기존 한계와 두 경로의 시간대 정책은 유지합니다.
 Java 회귀는 `Test-Trading.ps1`에도 포함되며, JS는 메인·상세 화면의 실제 분봉 소비 함수를 대역에서 검증합니다.
 
+REST 시세 Provider 선택·라우팅은 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=MarketDataProviderRegistryTest,MarketDataRoutingTest' test
+```
+
+`marketdata.provider`는 기동 시 선택하는 REST Provider 식별자입니다. 미설정 기본값은 `kis`이며,
+기존 `db.properties`의 동일 키 또는 JVM 옵션 `-Dmarketdata.provider=kis`로 명시할 수 있습니다.
+JVM 옵션은 파일 설정보다 우선하며, 설정 변경은 재시작 후 적용됩니다.
+현재 운영 등록은 KIS만 있습니다. 빈 값·잘못된 식별자·중복 등록·필수 계약 누락은 기동 실패로 처리합니다.
+선택한 Provider의 예외·null·빈 결과를 그대로 전달하며 다른 Provider로 자동 전환하지 않습니다.
+
+| REST 계약 | KIS 지원 범위 |
+|---|---|
+| `CurrentPriceProvider` | 국내 KRX 현재가 단건·목록 |
+| `PeriodChartProvider` | 국내 KRX 수정주가 일·주·월·년봉 |
+| `MinuteChartProvider` | 국내 KRX 일별·당일 최근 분봉 |
+| `MarketIndexChartProvider` | 기존 국내 시장 지수 일봉 |
+| `StockRankingProvider` | 기존 거래대금순·거래량순 조회 조건 |
+| `InvestorFlowProvider` | 국내 외국인·기관 순매수 가집계 |
+
+각 등록은 계약에 정의된 모든 메서드를 지원해야 하며, 현재 애플리케이션은 여섯 계약을 모두 요구합니다.
+새 Provider는 지원 계약과 adapter를 등록하고 공통 라우팅 구성으로 선택합니다.
+테스트의 `alternate`는 합성 대역으로 실제 증권사 지원을 의미하지 않습니다.
+선택 테스트는 실제 KIS 등록 구성·여섯 adapter와 대역 Provider를 사용해 기본 선택·아홉 메서드 위임,
+설정/지원 오류·우선 주입·부모/자식 context·HTTP 응답을 확인합니다.
+개발 properties·DB·Redis·HTTP/WS·전체 앱/보안 context·스케줄러는 로드하지 않습니다.
+이 설정은 공통 REST 계약을 사용하는 경로에 적용됩니다. KIS 전용 직접 호출과 WebSocket에는 적용하지 않습니다.
+선택 설정만으로 기존 KIS 기반 구성이나 연결의 생성을 비활성화하지는 않습니다.
+Kiwoom·토큰/캐시/제한 격리·Circuit Breaker·자동 장애 전환은 후속 범위입니다.
+
 외국인·기관 가집계 Provider와 신호등 HTTP/화면 호환성은 아래 명령으로 검증합니다.
 
 ```powershell
