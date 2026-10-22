@@ -39,7 +39,7 @@ public class KisSubscriptionRegistryTest {
         boolean failSubscribe;
         boolean failUnsubscribe;
 
-        Provider() { super(null, null, null); }
+        Provider() { super(null, null); }
 
         @Override
         public void subscribeCurrentMarket(String stockCode, boolean present) {

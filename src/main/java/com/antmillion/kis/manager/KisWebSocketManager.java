@@ -4,14 +4,13 @@ import com.antmillion.kis.dto.KisWebSocketTransactionPriceRequest;
 import com.antmillion.kis.constant.KisWebSocketTrId;
 import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.service.KisApiService;
-import com.antmillion.stock.service.TradingEngineService;
+import com.antmillion.marketdata.provider.RealtimeMarketDataReceiver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
@@ -37,8 +36,7 @@ import java.util.concurrent.TimeUnit;
 public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private static final int MAX_ACK_RETRIES = 2;
     private final KisApiService kisApiService;
-    private final SimpMessagingTemplate messagingTemplate;
-    private final TradingEngineService tradingEngineService;
+    private final RealtimeMarketDataReceiver receiver;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Object state = new Object();
     private final Map<String, Subscription> desired = new LinkedHashMap<>();
@@ -63,11 +61,9 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     private long lastReceivedAt;
     private long receiveTimeoutMillis = 90000;
 
-    public KisWebSocketManager(KisApiService kisApiService, SimpMessagingTemplate messagingTemplate,
-            TradingEngineService tradingEngineService) {
+    public KisWebSocketManager(KisApiService kisApiService, RealtimeMarketDataReceiver receiver) {
         this.kisApiService = kisApiService;
-        this.messagingTemplate = messagingTemplate;
-        this.tradingEngineService = tradingEngineService;
+        this.receiver = receiver;
     }
 
     @Override
@@ -386,8 +382,7 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
             synchronized (state) {
                 if (!running || generation != startedGeneration || activeAttempt != attempt || !hasLiveSubscriptions()) return null;
             }
-            future = handshake(new KisWebSocketHandler(this, key, messagingTemplate, objectMapper,
-                    tradingEngineService, attempt));
+            future = handshake(new KisWebSocketHandler(this, objectMapper, receiver, attempt));
             synchronized (state) {
                 if (!running || generation != startedGeneration || activeAttempt != attempt) return null;
                 connecting = future;

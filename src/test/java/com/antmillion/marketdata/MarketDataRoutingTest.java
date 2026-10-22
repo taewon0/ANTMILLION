@@ -26,6 +26,7 @@ import com.antmillion.marketdata.provider.PeriodChartProvider;
 import com.antmillion.marketdata.provider.StockRankingProvider;
 import com.antmillion.marketdata.provider.RealtimeSubscriptionProvider;
 import com.antmillion.marketdata.service.InvestorSignalService;
+import com.antmillion.marketdata.service.RealtimeMarketDataService;
 import org.junit.Test;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -247,6 +248,15 @@ public class MarketDataRoutingTest {
                 throw new AssertionError("Unexpected realtime unsubscription from REST context");
             }
         });
+        context.registerBean("realtimeMarketDataService", RealtimeMarketDataService.class,
+                () -> new RealtimeMarketDataService(null, null) {
+                    @Override public void onPrice(com.antmillion.marketdata.dto.RealtimePrice price) {
+                        throw new AssertionError("Unexpected realtime price from REST context");
+                    }
+                    @Override public void onOrderBook(com.antmillion.marketdata.dto.RealtimeOrderBook book) {
+                        throw new AssertionError("Unexpected realtime order book from REST context");
+                    }
+                });
         context.scan("com.antmillion.marketdata");
         return context;
     }

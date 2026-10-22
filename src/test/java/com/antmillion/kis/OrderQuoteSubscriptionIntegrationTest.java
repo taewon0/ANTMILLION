@@ -1,6 +1,10 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
+import com.antmillion.marketdata.service.RealtimeMarketDataService;
+import com.antmillion.marketdata.dto.OrderBookLevel;
+import com.antmillion.marketdata.dto.RealtimeOrderBook;
+import com.antmillion.marketdata.provider.RealtimeMarketDataReceiver;
 import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
 import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
 import com.antmillion.stock.dto.StockDTO;
@@ -105,6 +109,35 @@ public class OrderQuoteSubscriptionIntegrationTest {
         assertEquals(Long.valueOf(102000), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, seller));
         assertEquals(Integer.valueOf(3), jdbc.queryForObject("SELECT quantity FROM asset WHERE account_id=?", Integer.class, buyer));
         assertEquals(Long.valueOf(200), jdbc.queryForObject("SELECT SUM(realized_profit) FROM realized_pnl WHERE account_id=?", Long.class, seller));
+    }
+
+    @Test
+    public void commonOrderBookFillsBothSidesWithoutKisFrames() {
+        Long buy = create(buyer, "BUY", 2, 1100);
+        jdbc.update("INSERT INTO asset(account_id,stock_code,quantity,purchase_amount,avg_price) VALUES(?,'QS0001',2,1800,900)", seller);
+        Long sell = create(seller, "SELL", 2, 1000);
+        scheduler.start();
+        worker.task.run();
+        ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
+        List<org.springframework.messaging.Message<?>> broadcasts = new ArrayList<>();
+        channel.subscribe(broadcasts::add);
+        RealtimeMarketDataReceiver receiver = new RealtimeMarketDataService(new SimpMessagingTemplate(channel), engine);
+        List<OrderBookLevel> asks = new ArrayList<>();
+        List<OrderBookLevel> bids = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            asks.add(new OrderBookLevel("001100", "02"));
+            bids.add(new OrderBookLevel("001000", "02"));
+        }
+        receiver.onOrderBook(new RealtimeOrderBook("QS0001", asks, bids));
+        assertEquals(1, broadcasts.size());
+        assertEquals("COMPLETED", status(buy));
+        assertEquals("COMPLETED", status(sell));
+        assertEquals(Long.valueOf(97800), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, buyer));
+        assertEquals(Long.valueOf(102000), jdbc.queryForObject("SELECT balance FROM account WHERE account_id=?", Long.class, seller));
+        assertEquals(Integer.valueOf(2), jdbc.queryForObject("SELECT quantity FROM asset WHERE account_id=?", Integer.class, buyer));
+        assertEquals(Long.valueOf(200), jdbc.queryForObject("SELECT SUM(realized_profit) FROM realized_pnl WHERE account_id=?", Long.class, seller));
+        worker.task.run();
+        assertEquals(wire.provider.acquired, wire.provider.released);
     }
 
     @Test
@@ -427,7 +460,7 @@ public class OrderQuoteSubscriptionIntegrationTest {
         ExecutorSubscribableChannel channel = new ExecutorSubscribableChannel();
         channel.subscribe(message -> { });
         KisWebSocketHandler handler = new KisWebSocketHandler(null, null,
-                new SimpMessagingTemplate(channel), null, engine);
+                new RealtimeMarketDataService(new SimpMessagingTemplate(channel), engine), 0);
         handler.handleMessage(null, new TextMessage("0|H0STASP0|001|" + String.join("^", fields)));
     }
 }

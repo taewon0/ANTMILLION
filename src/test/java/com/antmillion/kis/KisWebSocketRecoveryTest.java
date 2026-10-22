@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
+import com.antmillion.marketdata.service.RealtimeMarketDataService;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
 import com.antmillion.kis.service.KisRealtimeSubscriptionProvider;
@@ -113,7 +114,7 @@ public class KisWebSocketRecoveryTest {
         Connection connection;
         CountDownLatch connecting = new CountDownLatch(1);
         Manager() { this(null, null); }
-        Manager(SimpMessagingTemplate template, TradingEngineService engine) { super(null, template, engine); }
+        Manager(SimpMessagingTemplate template, TradingEngineService engine) { super(null, new RealtimeMarketDataService(template, engine)); }
         @Override protected ThreadPoolTaskScheduler createScheduler() { return timer = new Timer(); }
         @Override protected long nowMillis() { return now; }
         @Override protected LocalTime marketTime() { return market; }
