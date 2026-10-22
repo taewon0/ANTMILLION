@@ -252,7 +252,8 @@ public class KisApiService {
      * @return 코스피, 코스닥 캔들 차트 데이터 리스트
      */
     public List<MarketIndexPrice> getMarketIndexPrices(MarketIndexPriceRequest request) {
-        Optional<List<MarketIndexPrice>> cached = kisMarketIndexChartRepository.getChartData(request.getIndexCode());
+        String baseUrl = config.getBaseUrl();
+        Optional<List<MarketIndexPrice>> cached = kisMarketIndexChartRepository.getChartData(baseUrl, request);
         if (cached.isPresent()) {
             log.info("{} 차트 데이터 재사용",  request.getIndexCode());
             return cached.get();
@@ -260,7 +261,7 @@ public class KisApiService {
 
         log.info("한국투자증권 국내업종 일자별지수 api 호출");
         KisMarketIndexPriceResponse response = marketIndexPricesAPI(request);
-        kisMarketIndexChartRepository.save(request.getIndexCode(), response.getOutput2());
+        kisMarketIndexChartRepository.save(baseUrl, request, response.getOutput2());
         return response.getOutput2();
     }
 
