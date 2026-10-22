@@ -25,6 +25,7 @@ import com.antmillion.marketdata.provider.MinuteChartProvider;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
 import com.antmillion.marketdata.provider.StockRankingProvider;
 import com.antmillion.marketdata.provider.RealtimeSubscriptionProvider;
+import com.antmillion.marketdata.provider.RealtimeProviderRegistration;
 import com.antmillion.marketdata.service.InvestorSignalService;
 import com.antmillion.marketdata.service.RealtimeMarketDataService;
 import org.junit.Test;
@@ -43,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.Assert.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -240,14 +242,14 @@ public class MarketDataRoutingTest {
         context.register(KisMarketDataProviderConfig.class);
         context.register(ADAPTERS.toArray(new Class<?>[0]));
         // 공통 패키지 스캔은 유지하며 REST 조회가 WS 요청을 발생시키면 실패합니다.
-        context.registerBean(RealtimeSubscriptionProvider.class, () -> new RealtimeSubscriptionProvider() {
+        context.registerBean(RealtimeProviderRegistration.class, () -> new RealtimeProviderRegistration("kis", new RealtimeSubscriptionProvider() {
             @Override public void subscribe(String stockCode, Kind kind) {
                 throw new AssertionError("Unexpected realtime subscription from REST context");
             }
             @Override public void unsubscribe(String stockCode, Kind kind) {
                 throw new AssertionError("Unexpected realtime unsubscription from REST context");
             }
-        });
+        }, Set.of(RealtimeSubscriptionProvider.Kind.CURRENT_PRICE, RealtimeSubscriptionProvider.Kind.ORDER_BOOK)));
         context.registerBean("realtimeMarketDataService", RealtimeMarketDataService.class,
                 () -> new RealtimeMarketDataService(null, null) {
                     @Override public void onPrice(com.antmillion.marketdata.dto.RealtimePrice price) {
