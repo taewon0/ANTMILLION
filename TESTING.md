@@ -429,6 +429,28 @@ node --test scripts/tests/market-index-chart.test.cjs
 실연동·실데이터 수치/거래일/조회 건수·전체 앱/브라우저·실제 JDK 11 실행은 검증 필요입니다.
 `scripts/Test-Trading.ps1`의 격리 DB 전체 실행 목록에도 신규 회귀를 포함합니다.
 
+## Kiwoom KRX 종목 순위 adapter 검증 (Issue #100)
+
+`KiwoomStockRankingProvider`는 명시 주입 전용 `StockRankingProvider`입니다.
+[공식 ka10030 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)의
+전체 시장·KRX·거래대금순 `3`/당일거래량순 `1`을 사용하고 거래량순에서만 ETF·ETN을 제외(`16`)합니다.
+가격·거래량·신용·장운영은 전체 조건입니다. 사용자 합의로 KIS 평균거래량 대신 당일거래량을 사용하며 실데이터 순위 일치를 보장하지 않습니다.
+
+- 단일 응답의 상위 30건을 공급 순서로 반환하며 연속 조회·재정렬은 하지 않습니다. 응답 위치로 1부터 순위를 부여하고 관심 표시값은 기존 KIS 기본값인 false입니다. 사용자별 관심 정보는 조회하지 않습니다.
+- 가격 방향 부호를 제거하여 원 단위 정수 문자열로, 거래량을 주 단위 정수 문자열로 변환합니다. 큰 수·등락률 부호·코드 선행 0·null/빈 값·중복·null 행을 보존합니다.
+- 기존 인증과 singleton limiter를 사용합니다. 실전 조회 예산은 공유하고 모의는 ka10030의 두 정렬끼리 공유합니다. 소진 시 토큰/HTTP 전에 즉시 실패하며 실패도 예산을 소비합니다.
+- 누락 목록·잘못된 수치·업무/통신/토큰 오류는 부분 반환 없이 실패하며 원격 예외 원문을 노출하지 않습니다. 공식 예제의 `returnCode`도 오류 코드로 읽습니다.
+- Spring bean·운영 Provider 등록/전환·캐시·retry/401 복구·CB·WS는 추가하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomStockRankingProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisStockRankingProviderTest,KisStockRankingControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+node --test scripts/tests/stock-ranking.test.cjs
+```
+
+Java 회귀는 합성 인증·시각·메모리 Redis/잠금·MockRestServiceServer·standalone MVC만 사용하며 실제 KIS adapter의 합성 DTO와 기존 세 경로의 JSON을 비교합니다.
+실제 설정·DB·Redis·증권사·전체 앱/스케줄러는 로드하지 않습니다. `Test-Trading.ps1`에도 등록했습니다.
+실데이터 수치·평균/당일 순위 차이·모의 지원·실제 Redis/전체 앱·브라우저·JDK 11 실행은 별도 검증 범위입니다.
+
 ## Kiwoom 지수 일봉 캐시 검증 (Issue #98)
 
 내부 adapter 생성 시 `KiwoomMarketIndexChartRedisRepository`를 명시 주입합니다. 저장소도 Spring bean/운영 Provider로 등록하지 않습니다.
