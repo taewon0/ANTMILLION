@@ -1,0 +1,8 @@
+# 기본 비활성: 파일이 없어도 기존 KIS 구성을 유지합니다.
+kiwoom.auth.enabled=false
+# real / virtual (기본 virtual)
+kiwoom.mode=virtual
+kiwoom.app-key=
+kiwoom.app-secret=
+# 공식 샘플과 같은 만료 전 재사용 중단 여유(초), 0~43200
+kiwoom.auth.refresh-buffer-seconds=600

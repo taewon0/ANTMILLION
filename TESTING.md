@@ -331,3 +331,46 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisRestRateLimitTest,KisAc
 토큰/approval 발급·마스터 다운로드·다른 JVM/프로그램의 호출은 공유하지 않으며, 재시작 시 JVM 예산은 초기화됩니다.
 실제 증권사의 제한 집계 방식·다른 프로그램의 동시 사용·전체 서버 기동은 별도 검증 범위입니다.
 이 회귀도 `Test-Trading.ps1`에 포함됩니다.
+
+## Kiwoom REST 인증 기반 검증 (Issue #80)
+
+Kiwoom 인증은 기본 비활성입니다. `kiwoomApi.properties`가 없어도 인증 bean을 등록하지 않습니다.
+필요할 때 `src/main/resources/kiwoomApi.properties.example`을 Git 제외 파일
+`kiwoomApi.properties`로 복사하고 자격증명을 별도로 주입합니다.
+설정은 Spring Environment를 사용하며 JVM/환경 설정이 파일보다 우선합니다.
+
+| 설정 | 기본값 | 허용 범위 |
+|---|---|---|
+| `kiwoom.auth.enabled` | false | true / false |
+| `kiwoom.mode` | virtual | real / virtual |
+| `kiwoom.app-key`, `kiwoom.app-secret` | 없음 | 활성 시 필수 |
+| `kiwoom.auth.refresh-buffer-seconds` | 600 | 0~43200초 |
+
+활성화해도 기동 시 토큰 발급·Redis 조회·잠금 획득을 하지 않습니다.
+내부 `KiwoomTokenService.getAccessToken()` 호출에만 인증하며 HTTP 매핑·예약 갱신은 없습니다.
+REST/WS Provider로는 아직 등록하지 않았으므로 `marketdata.provider=kiwoom` 선택은 지원하지 않습니다.
+
+[공식 au10001 명세](https://openapi.kiwoom.com/m/guide/apiguide?dummyVal=0)와
+[공식 인증 샘플](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/core/auth.py)을 참고했습니다.
+실전·모의의 `/oauth2/token`에 `client_credentials`·앱 키·시크릿을 전송하며,
+`expires_dt`를 한국 시각으로 해석하고 기본 600초 전부터 재사용을 중단합니다.
+요청이 있을 때만 재발급하며 자동 재시도·401 복구·원격 폐기는 추가하지 않습니다.
+신규 응답이 이미 만료됐거나 여유 시간 이내이면 반환·저장하지 않습니다.
+
+토큰/발급 잠금 키는 `kiwoom`·실제 주소·앱 키/시크릿의 길이 구분 SHA-256으로 격리합니다.
+Redis에는 토큰과 절대 만료 시각의 JSON 문자열을 저장하고, TTL은 저장 시점의 잔여 시간에서 여유 시간을 뺍니다.
+조회 시에도 절대 만료 시각을 검사하며 캐시 적중은 TTL을 연장하지 않습니다.
+발급은 최대 5초 잠금 대기 → 같은 범위 재확인 → 발급/저장을 사용합니다.
+고정 lease 대신 Redisson watchdog을 사용하며 소유한 잠금만 해제합니다.
+
+다음 명령은 합성 자격증명·고정 시각·메모리 Redis·잠금/HTTP 대역만 사용합니다.
+설정 테스트는 실제 Kiwoom 설정 파일도 가립니다. 개발 DB·실제 Redis/증권사·스케줄러는 로드하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomTokenServiceTest,KiwoomAuthConfigTest' test
+```
+
+환경/자격증명별 격리·만료/재사용·동시 최초 발급·오류/인터럽트/소유권 상실·민감값 비노출과
+기본 비활성/선택적 파일·잘못된 설정 거부·기존 KIS RestTemplate 우선 주입을 검증합니다.
+실제 Redis 잠금/TTL·전체 앱/JDK 11 기동·Kiwoom 실연동·발급 제한·시세/WS adapter·CB는 별도 검증 범위입니다.
+두 테스트는 `Test-Trading.ps1`의 격리 전체 실행 목록에도 포함됩니다.
