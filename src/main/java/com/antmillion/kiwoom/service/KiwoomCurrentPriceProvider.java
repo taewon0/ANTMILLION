@@ -20,10 +20,12 @@ import java.util.Objects;
 public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
+    private final KiwoomRestRateLimiter limiter;
 
-    public KiwoomCurrentPriceProvider(KiwoomTokenService tokens, RestTemplate rest) {
+    public KiwoomCurrentPriceProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
+        this.limiter = Objects.requireNonNull(limiter, "limiter");
     }
 
     @Override
@@ -53,6 +55,8 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
         if (stockCode == null || !stockCode.matches("[0-9A-Z]{6}")) {
             throw new IllegalArgumentException("Kiwoom 현재가는 KRX 6자리 종목코드만 지원합니다.");
         }
+        // 목록도 종목마다 소비합니다. 소진 시 Redis/토큰 발급/시세 HTTP에 진입하지 않습니다.
+        limiter.acquireCurrentPrice(tokens);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
         try {

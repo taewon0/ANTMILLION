@@ -403,5 +403,42 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomCurrentPriceProvider
 정상/누락/잘못된 응답·HTTP/통신 오류·목록 부분 실패·실전/모의 토큰과 주소 일치·DEBUG 로그 비노출,
 기존 KIS 선택 및 Kiwoom 인증 활성 상태에서도 adapter 미등록을 검증합니다.
 신규 회귀는 `Test-Trading.ps1`에도 포함됩니다.
-시세 캐시·호출 제한·retry/401 복구·운영 등록/전환·차트/WS·CB는 추가하지 않습니다.
+Issue #82는 시세 캐시·호출 제한·retry/401 복구·운영 등록/전환·차트/WS·CB를 추가하지 않았습니다.
+호출 제한은 아래 Issue #84 범위에서 연결합니다.
 실제 증권사/Redis·전체 앱/JDK 11·브라우저·격리 DB 체결은 별도 검증 범위입니다.
+
+## Kiwoom 현재가 REST 호출 제한 검증 (Issue #84)
+
+내부 adapter 생성 시 동일한 `KiwoomRestRateLimiter`를 전달합니다. Spring에서는 전용 singleton으로
+등록하며, 현재가 adapter 자체는 계속 bean·운영 Provider로 등록하지 않습니다.
+제한 클래스 생성·기동 시 토큰 조회·HTTP·Redis 호출은 없습니다.
+
+[공식 이용안내](https://openapi2.kiwoom.com/intro?dummyVal=0)의 국내주식 조회 실전 5회/초,
+모의 계좌·토큰별 TR당 1회/초를 기준으로 다음 설정을 사용합니다.
+
+```properties
+kiwoom.rest.rate-limit.real-per-second=5
+kiwoom.rest.rate-limit.virtual-per-second=1
+```
+
+실전은 1~5, 모의는 1만 허용하며 잘못된 값은 bean 생성 시 거부합니다.
+이번 공유 범위는 사용자 선택에 따른 **환경·앱 키별 JVM 예산**입니다. 길이 구분 SHA-256으로
+식별하며 시크릿/토큰 교체로 초기화하지 않습니다. 같은 계좌의 여러 앱 키·다른 JVM/프로그램 간
+공유는 지원하지 않으므로 운영 연결 전에 계좌별 공유 범위를 보완해야 합니다.
+실전 키는 국내주식 조회, 모의 키는 `ka10001`을 구분하며 현재 적용 경로는 현재가 TR뿐입니다.
+
+기존 KIS와 독립적인 Bucket4j greedy 예산(capacity와 초당 refill은 설정값)을 사용합니다.
+이는 원격 서버의 시간 구간 집계나 HTTP 전송 간격을 보장하지 않습니다. 예산은 자동 퇴거하지 않고
+프로세스 재시작 시 초기화됩니다. 각 유효 종목은 토큰 조회 전에 소비하며 이후 실패해도 환급하지 않습니다.
+소진 시 단건은 대기/재시도 없이 `KiwoomRateLimitExceededException`과 대기 시간을 전달합니다.
+목록은 한도에 걸린 항목도 기존 부분 실패처럼 제외합니다. HTTP 오류 응답 매핑은 추가하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomRestRateLimitTest,KiwoomCurrentPriceProviderTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisRestRateLimitTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+```
+
+고정 단조 시각·합성 토큰·메모리 Redis·잠금/HTTP 대역·최소 Spring context로 동시성·리필 경계·
+공유/격리·소진 시 토큰/HTTP 차단·기존 응답 계약을 검증합니다. 기존 응답 계약 회귀는 요청마다
+합성 시각을 전진시켜 충분히 리필하고, 호출 제한 회귀는 고정 시각으로 한도를 확인합니다.
+개발 설정·DB·실제 Redis/증권사·전체 앱/스케줄러는 로드하지 않습니다.
+신규 회귀를 `Test-Trading.ps1`에도 등록합니다. 발급 제한·캐시·retry/401·운영 등록/전환·차트/WS·CB는 후속입니다.
