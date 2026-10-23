@@ -374,3 +374,34 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomTokenServiceTest,Kiw
 기본 비활성/선택적 파일·잘못된 설정 거부·기존 KIS RestTemplate 우선 주입을 검증합니다.
 실제 Redis 잠금/TTL·전체 앱/JDK 11 기동·Kiwoom 실연동·발급 제한·시세/WS adapter·CB는 별도 검증 범위입니다.
 두 테스트는 `Test-Trading.ps1`의 격리 전체 실행 목록에도 포함됩니다.
+
+## Kiwoom KRX 현재가 adapter 검증 (Issue #82)
+
+`KiwoomCurrentPriceProvider`는 `CurrentPriceProvider`의 단건·목록 계약을 구현합니다.
+Spring bean·운영 Provider로 등록하지 않으며, 기존 KIS 선택과 기본 비활성을 유지합니다.
+`marketdata.provider=kiwoom` 전환은 지원하지 않습니다.
+
+[공식 ka10001 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)와
+[공식 현재가 샘플](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/examples/국내주식/종목정보/get_domestic_stock_info.py)을 참고했습니다.
+인증 서비스의 불변 환경과 캐시 토큰을 재사용하여 `/api/dostk/stkinfo`에 POST합니다.
+헤더는 `api-id=ka10001`·Bearer 토큰이며 본문은 `stk_cd`만 전송합니다.
+KRX 6자리 영문 대문자/숫자 코드를 지원하고 NXT/SOR 접미 코드는 요청 전에 거부합니다.
+
+가격의 방향 부호를 제거하고 원 단위 정수·Integer 범위를 정확히 검사합니다.
+정수와 같은 소수 표현(`71000.00`)은 허용하고 소수 원·범위 초과는 실패합니다.
+등락률은 부호·소수 자릿수를 보존하며, 누락은 null·공백은 빈 문자열로 유지합니다.
+단건의 누락/빈 가격은 null입니다. 목록은 입력 순서·중복을 유지하고 실패한 종목만 제외합니다.
+HTTP/파싱/토큰 조회 오류는 원문·원인 예외를 노출하지 않는 고정 메시지로 전달합니다.
+
+다음 명령은 합성 자격증명·고정 시각·메모리 Redis·잠금/HTTP 대역 및 최소 Spring context만 사용합니다.
+개발 DB·실제 Redis/증권사·전체 앱/스케줄러는 로드하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomCurrentPriceProviderTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+```
+
+정상/누락/잘못된 응답·HTTP/통신 오류·목록 부분 실패·실전/모의 토큰과 주소 일치·DEBUG 로그 비노출,
+기존 KIS 선택 및 Kiwoom 인증 활성 상태에서도 adapter 미등록을 검증합니다.
+신규 회귀는 `Test-Trading.ps1`에도 포함됩니다.
+시세 캐시·호출 제한·retry/401 복구·운영 등록/전환·차트/WS·CB는 추가하지 않습니다.
+실제 증권사/Redis·전체 앱/JDK 11·브라우저·격리 DB 체결은 별도 검증 범위입니다.

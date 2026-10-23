@@ -4,6 +4,7 @@ import com.antmillion.config.RestTemplateConfig;
 import com.antmillion.kiwoom.config.KiwoomAuthConfig;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomTokenService;
+import com.antmillion.kiwoom.service.KiwoomCurrentPriceProvider;
 import org.junit.Test;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.BeansException;
@@ -35,6 +36,7 @@ public class KiwoomAuthConfigTest {
             assertTrue(context.getBeansOfType(KiwoomTokenService.class).isEmpty());
             assertTrue(context.getBeansOfType(KiwoomAccessTokenRedisRepository.class).isEmpty());
             assertTrue(context.getBeansOfType(RestTemplate.class).isEmpty());
+            assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
         }
     }
 
@@ -59,6 +61,7 @@ public class KiwoomAuthConfigTest {
             infrastructure(context, redis, locks, rest);
             context.refresh();
             assertNotNull(context.getBean(KiwoomTokenService.class));
+            assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
             assertTrue(redis.reads.isEmpty());
             assertTrue(locks.keys.isEmpty());
             server.verify();
@@ -104,6 +107,39 @@ public class KiwoomAuthConfigTest {
                 assertSame(registry.getProvider(contract), context.getBean(contract));
             }
             assertTrue(context.getBeansOfType(KiwoomTokenService.class).isEmpty());
+        }
+    }
+
+    @Test
+    public void enabledAuthDoesNotRegisterCurrentPriceAdapterOrReplaceKisSelection() {
+        try (AnnotationConfigApplicationContext context = context(enabled(), null)) {
+            KiwoomTokenServiceTest.MutableClock clock = new KiwoomTokenServiceTest.MutableClock();
+            KiwoomTokenServiceTest.MemoryRedis redis = new KiwoomTokenServiceTest.MemoryRedis(clock);
+            RestTemplate rest = new RestTemplate();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(rest).build();
+            infrastructure(context, redis, new KiwoomTokenServiceTest.LockClient(), rest);
+            context.registerBean(com.antmillion.kis.service.KisApiService.class,
+                    () -> new com.antmillion.kis.service.KisApiService(null, null, null, null, null,
+                            null, null, null, null, null));
+            context.register(com.antmillion.kis.config.KisMarketDataProviderConfig.class,
+                    com.antmillion.marketdata.config.MarketDataRoutingConfig.class,
+                    com.antmillion.kis.service.KisCurrentPriceProvider.class,
+                    com.antmillion.kis.service.KisPeriodChartProvider.class,
+                    com.antmillion.kis.service.KisMinuteChartProvider.class,
+                    com.antmillion.kis.service.KisMarketIndexChartProvider.class,
+                    com.antmillion.kis.service.KisStockRankingProvider.class,
+                    com.antmillion.kis.service.KisInvestorFlowProvider.class);
+            context.refresh();
+            com.antmillion.marketdata.provider.MarketDataProviderRegistry registry =
+                    context.getBean(com.antmillion.marketdata.provider.MarketDataProviderRegistry.class);
+            assertEquals("kis", registry.getSelectedId());
+            assertEquals(6, registry.getSupportedContracts().size());
+            for (Class<?> contract : registry.getSupportedContracts()) {
+                assertSame(registry.getProvider(contract), context.getBean(contract));
+            }
+            assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
+            assertTrue(redis.reads.isEmpty());
+            server.verify();
         }
     }
 
