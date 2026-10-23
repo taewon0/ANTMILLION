@@ -12,6 +12,7 @@ import com.antmillion.kis.service.RateLimitedKisApiClient;
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
+import com.antmillion.kiwoom.repository.KiwoomMarketIndexChartRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomMarketIndexChartProvider;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimitTest;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
@@ -80,7 +81,7 @@ public class KiwoomMarketIndexChartProviderTest {
             @Override public boolean isWallClockBased() { return false; }
         });
         tokens = tokens(scope);
-        provider = new KiwoomMarketIndexChartProvider(tokens, rest, limiter);
+        provider = provider(tokens);
         cacheToken(scope, "synthetic-token");
     }
 
@@ -284,7 +285,7 @@ public class KiwoomMarketIndexChartProviderTest {
         limiter.acquirePeriodChart(realTokens, "ka10081");
         limiter.acquireMinuteChart(realTokens);
         limiter.acquireMarketIndexChart(realTokens);
-        MarketIndexChartProvider realProvider = new KiwoomMarketIndexChartProvider(realTokens, rest, limiter);
+        MarketIndexChartProvider realProvider = provider(realTokens);
         expect(real, "001", "20261023", "real-token").andRespond(withSuccess(body("001"), MediaType.APPLICATION_JSON));
         assertTrue(realProvider.getMarketIndexChart(request("0001")).isEmpty());
         int reads = redis.reads.size();
@@ -355,7 +356,7 @@ public class KiwoomMarketIndexChartProviderTest {
                 .andRespond(withSuccess("{\"token\":\"real-token\",\"token_type\":\"bearer\","
                         + "\"expires_dt\":\"20261024090000\",\"return_code\":0}", MediaType.APPLICATION_JSON));
         expect(real, "001", "20261023", "real-token").andRespond(withSuccess(body("001"), MediaType.APPLICATION_JSON));
-        assertTrue(new KiwoomMarketIndexChartProvider(tokens(real), rest, limiter).getMarketIndexChart(request("0001")).isEmpty());
+        assertTrue(provider(tokens(real)).getMarketIndexChart(request("0001")).isEmpty());
         assertEquals(List.of(real.getLockKey()), locks.keys);
         assertEquals("synthetic-token", repository.findAccessToken(scope, 600).orElseThrow());
         server.verify();
@@ -373,8 +374,8 @@ public class KiwoomMarketIndexChartProviderTest {
                     .andRespond(withSuccess(body("001"), MediaType.APPLICATION_JSON));
             expect(second, "101", "20261023", realFirst ? "synthetic-token" : "real-token")
                     .andRespond(withSuccess(body("101"), MediaType.APPLICATION_JSON));
-            new KiwoomMarketIndexChartProvider(tokens(first), rest, limiter).getMarketIndexChart(request("0001"));
-            new KiwoomMarketIndexChartProvider(tokens(second), rest, limiter).getMarketIndexChart(request("1001"));
+            provider(tokens(first)).getMarketIndexChart(request("0001"));
+            provider(tokens(second)).getMarketIndexChart(request("1001"));
             server.verify();
         }
     }
@@ -478,6 +479,14 @@ public class KiwoomMarketIndexChartProviderTest {
         for (String value : List.of("synthetic-sensitive", "synthetic-token", "synthetic-key", "synthetic-secret")) {
             assertFalse(error.toString().contains(value));
         }
+    }
+
+    private MarketIndexChartProvider provider(KiwoomTokenService tokenService) {
+        // 기존 계약 회귀는 저장 실패 대역에서 HTTP/제한/변환을 매번 검증합니다.
+        KiwoomTokenServiceTest.MemoryRedis chartRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
+        chartRedis.failWrites = true;
+        return new KiwoomMarketIndexChartProvider(tokenService, rest, limiter,
+                new KiwoomMarketIndexChartRedisRepository(chartRedis, clock));
     }
 
     private static MarketIndexChartRequest request(String code) {

@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartResponse.Price;
+import com.antmillion.kiwoom.repository.KiwoomMarketIndexChartRedisRepository;
 import com.antmillion.marketdata.dto.MarketIndexCandle;
 import com.antmillion.marketdata.dto.MarketIndexChartRequest;
 import com.antmillion.marketdata.provider.MarketIndexChartProvider;
@@ -21,18 +22,21 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 코스피·코스닥 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
 public final class KiwoomMarketIndexChartProvider implements MarketIndexChartProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomMarketIndexChartRedisRepository cache;
 
     public KiwoomMarketIndexChartProvider(KiwoomTokenService tokens, RestTemplate rest,
-            KiwoomRestRateLimiter limiter) {
+            KiwoomRestRateLimiter limiter, KiwoomMarketIndexChartRedisRepository cache) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
     }
 
     @Override
@@ -42,6 +46,8 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
             throw new IllegalArgumentException("Kiwoom 지수 일봉의 기준일이 유효하지 않습니다.");
         }
         String code = indexCode(request.getIndexCode());
+        Optional<List<MarketIndexCandle>> cached = cache.find(tokens.getBaseUrl(), request);
+        if (cached.isPresent()) return cached.get();
         KiwoomMarketIndexChartRequest body = new KiwoomMarketIndexChartRequest(code,
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
@@ -66,6 +72,7 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
             result.add(new MarketIndexCandle(price.getDate(), point(price.getCloseValue()),
                     point(price.getOpenValue()), point(price.getHighValue()), point(price.getLowValue())));
         }
+        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 
