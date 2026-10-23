@@ -1,12 +1,16 @@
 # 기본 비활성: 파일이 없어도 기존 KIS 구성을 유지합니다.
+# true이면 인증·캐시·여섯 REST adapter를 등록합니다. 실제 선택은 marketdata.provider 설정입니다.
 kiwoom.auth.enabled=false
+# REST Provider는 kisApi.properties의 marketdata.provider 또는 JVM 설정으로 선택합니다.
+# 예: -Dmarketdata.provider=kiwoom (인증 활성화와 유효한 자격증명 필요, 재기동 시 적용)
+# 실시간 WS는 marketdata.realtime-provider=kis를 유지합니다. Kiwoom WS는 지원하지 않습니다.
 # real / virtual (기본 virtual)
 kiwoom.mode=virtual
 kiwoom.app-key=
 kiwoom.app-secret=
 # 공식 샘플과 같은 만료 전 재사용 중단 여유(초), 0~43200
 kiwoom.auth.refresh-buffer-seconds=600
-# 국내주식 조회 로컬 예산: 실전 1~5, 모의 ka10001 1건/초
+# 국내주식 조회 로컬 예산: 실전 전체 조회 1~5건/초, 모의 TR별 1건/초
 # 환경·앱 키별 JVM 공유이며 같은 계좌의 여러 앱 키/다른 프로세스 간 공유는 후속입니다.
 kiwoom.rest.rate-limit.real-per-second=5
 kiwoom.rest.rate-limit.virtual-per-second=1

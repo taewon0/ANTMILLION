@@ -5,6 +5,11 @@ kis.account-no=00000000
 kis.acnt-prdt-cd=0000000000
 kis.mode=real
 
+# REST는 kis / kiwoom 중 기동 시 선택합니다. Kiwoom은 별도 인증 활성화/자격증명이 필요합니다.
+marketdata.provider=kis
+# 실시간 WS는 REST 선택과 독립입니다. 현재 등록된 구현은 kis입니다.
+marketdata.realtime-provider=kis
+
 # WS approval와 연결 주소도 kis.mode를 사용합니다. 환경/키 변경은 재시작 후 적용합니다.
 # real: approval 9443 / WS 21000, virtual: approval 29443 / WS 31000
 # 모의도 기존 15:30 통합·자정 KRX 전환을 유지합니다. 통합 TR의 모의 지원·실수신은 검증 필요입니다.
