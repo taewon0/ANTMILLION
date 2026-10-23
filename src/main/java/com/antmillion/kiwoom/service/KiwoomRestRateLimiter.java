@@ -47,6 +47,10 @@ public final class KiwoomRestRateLimiter {
         acquire(tokens, tokens.getQueryBudgetKey("ka10080"));
     }
 
+    public void acquireMarketIndexChart(KiwoomTokenService tokens) {
+        acquire(tokens, tokens.getQueryBudgetKey("ka20006"));
+    }
+
     private void acquire(KiwoomTokenService tokens, String budgetKey) {
         int perSecond = limits.tokensPerSecond(tokens.getBaseUrl());
         Bucket bucket = buckets.computeIfAbsent(budgetKey, key -> {

@@ -407,6 +407,28 @@ Issue #82는 시세 캐시·호출 제한·retry/401 복구·운영 등록/전�
 호출 제한은 아래 Issue #84 범위에서 연결합니다.
 실제 증권사/Redis·전체 앱/JDK 11·브라우저·격리 DB 체결은 별도 검증 범위입니다.
 
+## Kiwoom 코스피·코스닥 지수 일봉 adapter 검증 (Issue #96)
+
+`KiwoomMarketIndexChartProvider`는 명시 주입 전용 `MarketIndexChartProvider`입니다.
+공식 [ka20006 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)를 기준으로
+공통 코드 `0001`/`1001`을 Kiwoom `001`/`101`로 매핑하고 요청 종료일을 `base_dt`로 보냅니다.
+
+- OHLC는 방향 부호를 제거하고 100배 정수를 포인트 단위 소수 문자열로 정확히 변환합니다. null/빈 값·null 행·중복·최신순을 보존합니다.
+- 기존 KIS 지수 adapter처럼 단일 응답을 사용합니다. 연속 조회나 임의 건수 제한은 추가하지 않으며 서로의 실제 제공 건수·수치는 별도 검증 대상입니다.
+- 기존 인증·전용 HTTP·실전 공유/모의 `ka20006` 예산을 재사용합니다. 한도 소진은 토큰/HTTP 전에 거절하고 실패한 요청도 예산을 소비합니다.
+- 잘못된 입력/날짜·미래/역순 봉·다른 지수·누락 목록·잘못된 지수 값은 부분 반환 없이 실패합니다. 원격 메시지·토큰·파싱 예외 원문은 노출하지 않습니다.
+- Spring bean·운영 Provider로 등록하지 않으며 캐시·retry/401 복구·CB·WS는 후속입니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMarketIndexChartProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisMarketIndexChartProviderTest,KisMarketIndexChartControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+node --test scripts/tests/market-index-chart.test.cjs
+```
+
+합성 인증·고정 시각·메모리 Redis/잠금·MockRestServiceServer와 실제 두 adapter를 사용해 공통 DTO·기존 MVC JSON을 비교합니다.
+개발 설정·DB·실제 증권사/Redis·전체 앱 context/스케줄러는 로드하지 않습니다. 설정 테스트는 실제 Kiwoom 파일을 가립니다.
+실연동·실데이터 수치/거래일/조회 건수·전체 앱/브라우저·실제 JDK 11 실행은 검증 필요입니다.
+`scripts/Test-Trading.ps1`의 격리 DB 전체 실행 목록에도 신규 회귀를 포함합니다.
+
 ## Kiwoom KRX 분봉 adapter 검증 (Issue #92)
 
 `KiwoomMinuteChartProvider`는 내부 명시 주입 전용 `MinuteChartProvider`입니다.
