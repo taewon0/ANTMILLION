@@ -57,6 +57,10 @@ public class KiwoomTokenService {
         return scope.getCurrentPriceBudgetKey();
     }
 
+    public String getQueryBudgetKey(String apiId) {
+        return scope.getQueryBudgetKey(apiId);
+    }
+
     public String getAccessToken() {
         Optional<String> saved = tokens.findAccessToken(scope, refreshBufferSeconds);
         if (saved.isPresent()) return saved.get();
