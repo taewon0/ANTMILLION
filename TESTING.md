@@ -417,10 +417,10 @@ Issue #82는 시세 캐시·호출 제한·retry/401 복구·운영 등록/전�
 - 기존 KIS 지수 adapter처럼 단일 응답을 사용합니다. 연속 조회나 임의 건수 제한은 추가하지 않으며 서로의 실제 제공 건수·수치는 별도 검증 대상입니다.
 - 기존 인증·전용 HTTP·실전 공유/모의 `ka20006` 예산을 재사용합니다. 한도 소진은 토큰/HTTP 전에 거절하고 실패한 요청도 예산을 소비합니다.
 - 잘못된 입력/날짜·미래/역순 봉·다른 지수·누락 목록·잘못된 지수 값은 부분 반환 없이 실패합니다. 원격 메시지·토큰·파싱 예외 원문은 노출하지 않습니다.
-- Spring bean·운영 Provider로 등록하지 않으며 캐시·retry/401 복구·CB·WS는 후속입니다.
+- Spring bean·운영 Provider로 등록하지 않으며 retry/401 복구·CB·WS는 후속입니다. 캐시는 Issue #98에서 아래와 같이 연결했습니다.
 
 ```powershell
-mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMarketIndexChartProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisMarketIndexChartProviderTest,KisMarketIndexChartControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMarketIndexChartProviderTest,KiwoomMarketIndexChartCacheTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisMarketIndexChartProviderTest,KisMarketIndexChartControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
 node --test scripts/tests/market-index-chart.test.cjs
 ```
 
@@ -428,6 +428,18 @@ node --test scripts/tests/market-index-chart.test.cjs
 개발 설정·DB·실제 증권사/Redis·전체 앱 context/스케줄러는 로드하지 않습니다. 설정 테스트는 실제 Kiwoom 파일을 가립니다.
 실연동·실데이터 수치/거래일/조회 건수·전체 앱/브라우저·실제 JDK 11 실행은 검증 필요입니다.
 `scripts/Test-Trading.ps1`의 격리 DB 전체 실행 목록에도 신규 회귀를 포함합니다.
+
+## Kiwoom 지수 일봉 캐시 검증 (Issue #98)
+
+내부 adapter 생성 시 `KiwoomMarketIndexChartRedisRepository`를 명시 주입합니다. 저장소도 Spring bean/운영 Provider로 등록하지 않습니다.
+
+- 기존 KIS 지수와 같은 캐시 우선·60초 TTL입니다. 입력 검증 후 적중하면 호출 예산·토큰 조회/발급·HTTP를 사용하지 않습니다. 미적중 시 단일 조회·기존 실전 공유/모의 ka20006 예산·소진 즉시 실패를 유지합니다.
+- 키는 `kiwoom:chart:market-index:v1`과 실제 주소·시장 U·공통 지수 코드·일봉 D·기준일을 길이 구분하여 구성합니다. 공개 지수에는 자격증명을 포함하지 않으며 KIS/다른 캐시와 격리합니다.
+- 검증·정규화 후의 전체 목록을 JSON 문자열로 저장합니다. 임의 건수 상한 없이 두 자리 소수 문자열·큰 수·null/빈 값·최신순·중복·null 행을 보존합니다. 정상 빈 목록은 저장하며 누락 목록·HTTP/업무/토큰/변환 실패는 저장하지 않습니다.
+- Redis TTL·절대 만료·시계 역행을 검사하고 조회로 만료를 연장하지 않습니다. 손상·만료·조회 장애는 miss, 저장 장애는 정상 응답 유지입니다. 만료 캐시 fallback은 없으며 장중 봉·빈 목록도 TTL 동안 재사용합니다.
+- `KiwoomMarketIndexChartCacheTest`는 고정 시각·메모리 Redis/잠금·HTTP 대역으로 위 정책과 두 지수의 cold/warm MVC JSON을 검증합니다. 기존 adapter 테스트는 저장 실패 대역에서 HTTP/한도/변환 회귀를 유지합니다. 위 지수 명령과 `Test-Trading.ps1`에 신규 회귀를 포함합니다.
+
+실제 설정·DB·Redis/증권사·전체 앱/스케줄러를 로드하지 않습니다. 실제 TTL/분산 실행·동시 miss 제어·장중 신선도 개선·실데이터 지수/거래일/건수·실제 JDK 11·서버/브라우저·운영 등록/전환은 후속입니다.
 
 ## Kiwoom KRX 분봉 adapter 검증 (Issue #92)
 
