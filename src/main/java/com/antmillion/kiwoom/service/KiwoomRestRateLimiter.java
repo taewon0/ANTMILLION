@@ -55,6 +55,10 @@ public final class KiwoomRestRateLimiter {
         acquire(tokens, tokens.getQueryBudgetKey("ka10030"));
     }
 
+    public void acquireInvestorFlow(KiwoomTokenService tokens) {
+        acquire(tokens, tokens.getQueryBudgetKey("ka10064"));
+    }
+
     private void acquire(KiwoomTokenService tokens, String budgetKey) {
         int perSecond = limits.tokensPerSecond(tokens.getBaseUrl());
         Bucket bucket = buckets.computeIfAbsent(budgetKey, key -> {
