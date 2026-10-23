@@ -12,6 +12,7 @@ import com.antmillion.kis.service.RateLimitedKisApiClient;
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
+import com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimitTest;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
 import com.antmillion.kiwoom.service.KiwoomStockRankingProvider;
@@ -147,7 +148,7 @@ public class KiwoomStockRankingProviderTest {
     }
 
     @Test
-    public void queriesNeverCacheRankingOrExtendTokenExpiry() {
+    public void cacheWriteFailurePreservesRepeatedHttpAndTokenExpiry() {
         Map<String, Long> expirations = new java.util.HashMap<>(redis.expirations);
         for (int i = 0; i < 2; i++) expect(false).andRespond(withSuccess(body(row("005930", Integer.toString(i))), MediaType.APPLICATION_JSON));
         assertEquals("0", query(false).get(0).getCurrentPrice());
@@ -499,7 +500,11 @@ public class KiwoomStockRankingProviderTest {
     }
 
     private StockRankingProvider provider(KiwoomTokenService target) {
-        return new KiwoomStockRankingProvider(target, rest, limiter);
+        // 기존 adapter 계약은 저장 실패 대역으로 항상 miss를 만들어 검증합니다.
+        KiwoomTokenServiceTest.MemoryRedis cacheRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
+        cacheRedis.failWrites = true;
+        return new KiwoomStockRankingProvider(target, rest, limiter,
+                new KiwoomStockRankingRedisRepository(cacheRedis, clock));
     }
 
     private KiwoomTokenService tokens(KiwoomAccessTokenScope target) {

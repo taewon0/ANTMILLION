@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingRequest;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingResponse;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingResponse.Stock;
+import com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository;
 import com.antmillion.marketdata.dto.RankedStock;
 import com.antmillion.marketdata.provider.StockRankingProvider;
 import org.springframework.http.HttpEntity;
@@ -16,17 +17,21 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
 public final class KiwoomStockRankingProvider implements StockRankingProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomStockRankingRedisRepository cache;
 
-    public KiwoomStockRankingProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
+    public KiwoomStockRankingProvider(KiwoomTokenService tokens, RestTemplate rest,
+            KiwoomRestRateLimiter limiter, KiwoomStockRankingRedisRepository cache) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
     }
 
     @Override
@@ -41,9 +46,12 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
     }
 
     private List<RankedStock> getRanks(boolean volumeOrder) {
+        KiwoomStockRankingRequest request = new KiwoomStockRankingRequest(volumeOrder);
+        Optional<List<RankedStock>> cached = cache.find(tokens.getBaseUrl(), request);
+        if (cached.isPresent()) return cached.get();
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
         limiter.acquireStockRanking(tokens);
-        KiwoomStockRankingResponse response = fetch(new KiwoomStockRankingRequest(volumeOrder));
+        KiwoomStockRankingResponse response = fetch(request);
         if (response == null || (response.getReturnCode() != null && response.getReturnCode() != 0)
                 || response.getStocks() == null) throw invalidResponse();
         List<RankedStock> result = new ArrayList<>();
@@ -61,6 +69,7 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
                     integer(stock.getCurrentPrice(), true), integer(stock.getAccumulatedVolume(), false),
                     rate(stock.getChangeRate()), false));
         }
+        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 
