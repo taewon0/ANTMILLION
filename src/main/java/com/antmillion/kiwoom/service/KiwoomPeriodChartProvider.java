@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartResponse.Price;
+import com.antmillion.kiwoom.repository.KiwoomPeriodChartRedisRepository;
 import com.antmillion.marketdata.dto.PeriodCandle;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
@@ -22,6 +23,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
 public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
@@ -29,17 +31,22 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomPeriodChartRedisRepository cache;
 
-    public KiwoomPeriodChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
+    public KiwoomPeriodChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
+            KiwoomPeriodChartRedisRepository cache) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
     }
 
     @Override
     public List<PeriodCandle> getPeriodChart(PeriodChartRequest request) {
         validate(request);
         String apiId = apiId(request.getPeriod());
+        Optional<List<PeriodCandle>> cached = cache.find(tokens.getBaseUrl(), request);
+        if (cached.isPresent()) return cached.get();
         KiwoomPeriodChartRequest body = new KiwoomPeriodChartRequest(request.getStockCode(),
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
         // KIS 기간별 시세와 같이 시세 HTTP는 한 번만 호출하고 최대 100건을 반환합니다.
@@ -71,6 +78,7 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
                         price(price.getOpenPrice()), price(price.getHighPrice()), price(price.getLowPrice())));
             }
         }
+        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 
