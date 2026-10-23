@@ -407,6 +407,27 @@ Issue #82는 시세 캐시·호출 제한·retry/401 복구·운영 등록/전�
 호출 제한은 아래 Issue #84 범위에서 연결합니다.
 실제 증권사/Redis·전체 앱/JDK 11·브라우저·격리 DB 체결은 별도 검증 범위입니다.
 
+## Kiwoom 기간별 차트 adapter 검증 (Issue #88)
+
+`KiwoomPeriodChartProvider`는 KRX 수정주가 일·주·월·년봉의 `PeriodChartProvider` 계약을 구현합니다.
+Spring bean/운영 Provider로 등록하지 않으며 기존 전역 REST/WS 선택과 기본 KIS를 유지합니다.
+공식 [차트 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)의
+`ka10081/ka10082/ka10083/ka10094`, `/api/dostk/chart`, `upd_stkpc_tp=1`을 사용합니다.
+
+- 요청 종료일을 `base_dt`로 고정하고 `cont-yn`/`next-key`로 연속 조회합니다. 응답 `dt`가 시작·종료일 양끝을 포함하는 행만 반환하며, 봉을 일봉으로 재집계하거나 날짜를 바꾸지 않습니다.
+- 응답의 최신순·중복·null 행·빈/누락 가격을 보존합니다. 가격은 방향 부호를 제거한 정확한 원 단위 정수 문자열로 변환하며, 소수 원·잘못된 가격/날짜·다른 종목·역순 날짜·누락 목록은 실패합니다.
+- 시작일 도달 또는 연속 조회 종료 시 반환합니다. 빈 연속 페이지·누락/반복 키·100페이지 상한은 실패하며 정상 부분 결과로 처리하지 않습니다.
+- 모든 페이지가 토큰 조회/HTTP 전에 호출 예산을 소비합니다. 실전은 현재가와 환경·앱 키별 예산을 공유하고, 모의는 TR별 1회/초를 적용합니다. 기존 현재가 예산 키와 토큰/캐시 키는 유지합니다.
+- 사용자가 선택한 정책에 따라 한도 소진은 즉시 실패하며 누적 데이터를 반환하지 않습니다. 대기·retry·캐시·HTTP 매핑·401 복구·자동 전환은 추가하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,KiwoomCurrentPriceCacheTest,KiwoomRestRateLimitTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
+```
+
+테스트는 합성 자격증명·고정 시각·메모리 Redis/잠금·MockRestServiceServer·실제 파일을 가린 최소 Spring context를 사용합니다.
+개발 DB 설정·DB·실제 Redis/증권사·전체 앱/스케줄러를 로드하지 않습니다. 실제 연동·JDK 11·서버/브라우저·분산 실행은 별도 검증 범위입니다.
+
 ## Kiwoom 현재가 REST 호출 제한 검증 (Issue #84)
 
 내부 adapter 생성 시 동일한 `KiwoomRestRateLimiter`를 전달합니다. Spring에서는 전용 singleton으로

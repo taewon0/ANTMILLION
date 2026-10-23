@@ -33,9 +33,16 @@ public final class KiwoomAccessTokenScope {
         String identity = identity("kiwoom", baseUrl, appKey, appSecret);
         tokenKey = "kiwoom:access_token:v1:" + identity;
         lockKey = "kiwoom:token:lock:v1:" + identity;
-        // 실전은 국내주식 조회, 모의는 현재가 TR 예산입니다. 시크릿/토큰 교체로 초기화하지 않습니다.
-        currentPriceBudgetKey = identity("kiwoom", baseUrl, appKey,
-                "real".equalsIgnoreCase(mode) ? "dostk-query" : "ka10001");
+        // 기존 현재가 키를 유지하며 실전은 조회 공유, 모의는 TR별 예산을 사용합니다.
+        currentPriceBudgetKey = getQueryBudgetKey("ka10001");
+    }
+
+    public String getQueryBudgetKey(String apiId) {
+        if (apiId == null || !apiId.matches("ka[0-9]{5}")) {
+            throw new IllegalArgumentException("Kiwoom 국내주식 조회 TR이 유효하지 않습니다.");
+        }
+        return identity("kiwoom", baseUrl, appKey,
+                "https://api.kiwoom.com".equals(baseUrl) ? "dostk-query" : apiId);
     }
 
     private static String identity(String... values) {

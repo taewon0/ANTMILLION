@@ -142,6 +142,7 @@ public class KiwoomAuthConfigTest {
                 assertSame(registry.getProvider(contract), context.getBean(contract));
             }
             assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
+            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomPeriodChartProvider.class).isEmpty());
             assertTrue(redis.reads.isEmpty());
             server.verify();
         }

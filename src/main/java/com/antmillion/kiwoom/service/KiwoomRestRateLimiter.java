@@ -33,8 +33,19 @@ public final class KiwoomRestRateLimiter {
     }
 
     public void acquireCurrentPrice(KiwoomTokenService tokens) {
+        acquire(tokens, tokens.getCurrentPriceBudgetKey());
+    }
+
+    public void acquirePeriodChart(KiwoomTokenService tokens, String apiId) {
+        if (apiId == null || !java.util.Set.of("ka10081", "ka10082", "ka10083", "ka10094").contains(apiId)) {
+            throw new IllegalArgumentException("Kiwoom 기간별 차트 TR이 유효하지 않습니다.");
+        }
+        acquire(tokens, tokens.getQueryBudgetKey(apiId));
+    }
+
+    private void acquire(KiwoomTokenService tokens, String budgetKey) {
         int perSecond = limits.tokensPerSecond(tokens.getBaseUrl());
-        Bucket bucket = buckets.computeIfAbsent(tokens.getCurrentPriceBudgetKey(), key -> {
+        Bucket bucket = buckets.computeIfAbsent(budgetKey, key -> {
             Bandwidth limit = Bandwidth.builder().capacity(perSecond)
                     .refillGreedy(perSecond, Duration.ofSeconds(1)).build();
             return Bucket.builder().withCustomTimePrecision(timeMeter).addLimit(limit).build();
