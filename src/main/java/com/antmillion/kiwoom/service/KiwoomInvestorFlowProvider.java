@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowRequest;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowResponse;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowResponse.Flow;
+import com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository;
 import com.antmillion.marketdata.dto.InvestorFlow;
 import com.antmillion.marketdata.provider.InvestorFlowProvider;
 import org.springframework.http.HttpEntity;
@@ -20,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.format.ResolverStyle;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 장중 순매수 내부 adapter입니다. KIS 추정 가집계와 실데이터 일치를 보장하지 않습니다. */
 public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
@@ -28,11 +30,14 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomInvestorFlowRedisRepository cache;
 
-    public KiwoomInvestorFlowProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
+    public KiwoomInvestorFlowProvider(KiwoomTokenService tokens, RestTemplate rest,
+            KiwoomRestRateLimiter limiter, KiwoomInvestorFlowRedisRepository cache) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
     }
 
     @Override
@@ -40,9 +45,12 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
         if (stockCode == null || !stockCode.matches("[0-9A-Z]{6}")) {
             throw new IllegalArgumentException("Kiwoom 외국인·기관 조회는 KRX 단축 코드만 지원합니다.");
         }
+        KiwoomInvestorFlowRequest request = new KiwoomInvestorFlowRequest(stockCode);
+        Optional<InvestorFlow> cached = cache.find(tokens.getBaseUrl(), request);
+        if (cached.isPresent()) return cached.get();
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
         limiter.acquireInvestorFlow(tokens);
-        ResponseEntity<KiwoomInvestorFlowResponse> response = fetch(new KiwoomInvestorFlowRequest(stockCode));
+        ResponseEntity<KiwoomInvestorFlowResponse> response = fetch(request);
         KiwoomInvestorFlowResponse data = response.getBody();
         if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
                 || data.getFlows() == null) throw invalidResponse();
@@ -69,6 +77,8 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
             }
         }
         if (latestConflicts) throw invalidResponse();
+        // 빈 목록은 기존 KIS처럼 저장하지 않으며, 유효 행의 null/빈 수량은 그대로 캐시합니다.
+        if (latestTime != null) cache.save(tokens.getBaseUrl(), request, latest);
         return latest;
     }
 

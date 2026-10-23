@@ -582,8 +582,8 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomRestRateLimitTest,Ki
 - 주 단위 수량의 부호는 보존하고 정수 문자열로 정규화합니다. 두 수량이 모두 있으면 임의 정밀도 정수로 합산하며, 하나라도 누락/빈 값이면 합계는 null입니다.
 - 잘못된 시각·수량·null 행·상충하는 동일 최신 시각·목록/업무/HTTP/토큰 오류는 부분 결과 없이 실패합니다. 원격 메시지/원인 예외는 노출하지 않습니다.
 - 기존 공통 신호등 서비스의 long 파싱·색상·누락/빈 값/범위 초과 정책과 URL/JSON은 유지합니다. 큰 개별 수량을 신호등에서 처리하도록 확장하지 않습니다.
-- 토큰 조회 전에 기존 singleton 예산을 소비합니다. 실전은 다른 조회와 공유하고 모의는 ka10064 예산을 공유하며 실패해도 환급하지 않습니다.
-- 캐시·기동 호출·Spring 시세 bean/운영 Provider 등록·HTTP 오류 매핑·retry/401 복구·WS·CB는 추가하지 않습니다.
+- 캐시 미적중 시 토큰 조회 전에 기존 singleton 예산을 소비합니다. 실전은 다른 조회와 공유하고 모의는 ka10064 예산을 공유하며 실패해도 환급하지 않습니다.
+- 캐시는 Issue #106에서 아래와 같이 연결했습니다. 기동 호출·Spring 시세 bean/운영 Provider 등록·HTTP 오류 매핑·retry/401 복구·WS·CB는 추가하지 않습니다.
 
 ```powershell
 mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomInvestorFlowProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisInvestorFlowProviderTest,KisInvestorSignalControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
@@ -594,3 +594,27 @@ mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
 합성 인증·고정 시각·메모리 Redis/잠금·MockRestServiceServer·standalone MVC와 실제 파일을 가린 최소 인증 context만 사용합니다.
 실제 KIS/HTTP adapter와 합성 DTO·신호등 JSON을 비교하며 실데이터 동등성을 입증하지 않습니다. 개발 properties·DB·실제 Redis/증권사·전체 앱/보안 context·운영 스케줄러는 로드하지 않습니다.
 응답에 날짜가 없어 거래일/신선도·실제 제공 범위·모의 지원은 검증 필요입니다. 실제 Redis·전체 앱/JSP·브라우저·실제 JDK 11·격리 DB 체결은 별도 검증 범위입니다.
+
+## Kiwoom 외국인·기관 장중 순매수 캐시 검증 (Issue #106)
+
+내부 명시 주입 전용 `KiwoomInvestorFlowRedisRepository`를 adapter 생성자에 연결합니다.
+기존 KIS와 같은 캐시 우선·600초 TTL이며 적중 시 한도·토큰 조회/발급·HTTP를 사용하지 않습니다.
+키에는 Provider 전용 접두사·실제 요청 주소·ka10064·본문 전체 조건(시장·수량 구분·매매 구분·종목코드)을 포함합니다.
+공개 시세 캐시에는 자격증명을 넣지 않으며 KIS·다른 시세·토큰/잠금·기존 키는 재사용하지 않습니다.
+
+- 검증/정규화 및 최신 시각 선택을 마친 단일 DTO를 JSON 문자열로 저장합니다. 부호·큰 수·null/빈 문자열·합산 규칙을 보존합니다.
+- 빈 응답 목록은 저장하지 않습니다. 유효 행의 수량이 모두 null인 경우에는 그 DTO를 저장합니다.
+- Redis TTL과 절대 만료를 검사하고 시계 역행·손상·조회 장애는 miss로 처리합니다. 조회로 TTL을 연장하지 않습니다.
+- 저장 장애는 정상 응답을 유지합니다. HTTP/업무/토큰/변환/불완전 응답은 저장하지 않고 만료 캐시 fallback은 없습니다.
+- 기존 계약 테스트는 저장 장애 대역으로 원격 응답을 계속 검증하고 전용 캐시 테스트는 실제 저장소와 adapter를 연결합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomInvestorFlowCacheTest,KiwoomInvestorFlowProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisInvestorFlowProviderTest,KisInvestorSignalControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+node --test scripts/tests/investor-signal.test.cjs
+mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
+```
+
+합성 인증·고정 시각·메모리 Redis/잠금·MockRestServiceServer·standalone MVC와 실제 파일을 가린 최소 인증 context만 사용합니다.
+DB/실제 Redis/증권사·전체 앱/보안 context·운영 스케줄러는 로드하지 않습니다. `Test-Trading.ps1`에도 신규 회귀를 등록합니다.
+캐시 보관 시간은 수신 데이터의 거래일/신선도를 보증하지 않으며 장중 값과 null/빈 수량도 최대 600초 재사용합니다.
+실제 Redis/실연동·실제 JDK 11·전체 앱/JSP·브라우저·격리 DB 체결·동시 miss/신선도 개선·운영 등록/전환·retry/401·CB·WS는 후속입니다.
