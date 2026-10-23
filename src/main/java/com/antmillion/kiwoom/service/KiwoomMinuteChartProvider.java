@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartResponse.Price;
+import com.antmillion.kiwoom.repository.KiwoomDailyMinuteRedisRepository;
 import com.antmillion.marketdata.dto.MinuteCandle;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
 import com.antmillion.marketdata.dto.RecentMinuteCandle;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
 public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
@@ -34,18 +36,21 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomDailyMinuteRedisRepository cache;
     private final Clock clock;
 
-    public KiwoomMinuteChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
+    public KiwoomMinuteChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
+            KiwoomDailyMinuteRedisRepository cache) {
         // 기존 Controller/서비스와 같은 JVM 기본 시간대를 유지합니다.
-        this(tokens, rest, limiter, Clock.systemDefaultZone());
+        this(tokens, rest, limiter, cache, Clock.systemDefaultZone());
     }
 
     public KiwoomMinuteChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
-            Clock clock) {
+            KiwoomDailyMinuteRedisRepository cache, Clock clock) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -55,6 +60,9 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
                 || request.getDate().getYear() > 9999) {
             throw new IllegalArgumentException("Kiwoom 분봉 조회 날짜가 유효하지 않습니다.");
         }
+        validateStockCode(request.getStockCode());
+        Optional<List<MinuteCandle>> cached = cache.find(tokens.getBaseUrl(), request);
+        if (cached.isPresent()) return cached.get();
         List<Price> prices = fetch(request.getStockCode(), request.getDate());
         if (prices == null) return Collections.emptyList();
         List<MinuteCandle> result = new ArrayList<>();
@@ -68,6 +76,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
             }
         }
         Collections.reverse(result);
+        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 
@@ -86,9 +95,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
     }
 
     private List<Price> fetch(String stockCode, LocalDate date) {
-        if (stockCode == null || !stockCode.matches("[0-9A-Z]{6}")) {
-            throw new IllegalArgumentException("Kiwoom 분봉의 KRX 종목이 유효하지 않습니다.");
-        }
+        validateStockCode(stockCode);
         KiwoomMinuteChartRequest body = new KiwoomMinuteChartRequest(stockCode,
                 date.format(DateTimeFormatter.BASIC_ISO_DATE));
         // 두 분봉 경로는 같은 TR 예산을 소비하며 토큰 조회보다 먼저 거절합니다.
@@ -113,6 +120,12 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
                 || (data.getStockCode() != null && !data.getStockCode().isBlank()
                 && !stockCode.equals(data.getStockCode()))) throw invalidResponse();
         return data.getPrices();
+    }
+
+    private static void validateStockCode(String stockCode) {
+        if (stockCode == null || !stockCode.matches("[0-9A-Z]{6}")) {
+            throw new IllegalArgumentException("Kiwoom 분봉의 KRX 종목이 유효하지 않습니다.");
+        }
     }
 
     private static List<Price> select(List<Price> prices, LocalDateTime end, int limit) {

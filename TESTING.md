@@ -420,13 +420,26 @@ KRX 종목·1분봉·수정주가 1·기준일자를 사용합니다. Spring bea
 - 가격 방향 부호를 제거하고 정확한 정수 원으로 정규화합니다. 잘못된 날짜/시각·역순·종목 불일치·가격/long 범위 오류는 부분 반환 없이 실패합니다. 원격 오류/토큰·파싱 예외의 원문은 노출하지 않습니다.
 
 ```powershell
-mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMinuteChartProviderTest,KiwoomRestRateLimitTest,KisMinuteChartProviderTest,KisMinuteChartControllerTest,KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,MarketDataRoutingTest' test
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMinuteChartProviderTest,KiwoomDailyMinuteCacheTest,KiwoomRestRateLimitTest,KisMinuteChartProviderTest,KisMinuteChartControllerTest,KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,MarketDataRoutingTest' test
 ```
 
 합성 인증·고정 시각·메모리 Redis/잠금·HTTP 대역으로 실제 KIS adapter와 DTO·MVC JSON을 비교합니다.
 기존 JS 분봉 소비 회귀는 `node --test scripts/tests/minute-chart.test.cjs`로 실행합니다.
 실제 설정·DB·증권사·Redis·전체 앱 context/스케줄러는 로드하지 않습니다.
-캐시·운영 등록/선택·retry/401·CB·WS는 후속입니다. 실제 두 증권사의 수정주가·봉 시각/수치·허봉·장 경계 동등성은 검증 필요입니다.
+일별 캐시는 Issue #94에서 아래와 같이 추가했습니다. 최근 분봉 캐시·운영 등록/선택·retry/401·CB·WS는 후속입니다. 실제 두 증권사의 수정주가·봉 시각/수치·허봉·장 경계 동등성은 검증 필요입니다.
+
+## Kiwoom 일별 분봉 캐시 검증 (Issue #94)
+
+내부 adapter 생성 시 `KiwoomDailyMinuteRedisRepository`를 명시 주입합니다. 저장소도 Spring bean/운영 Provider로 등록하지 않습니다.
+
+- 일별 분봉만 기존 KIS와 같은 캐시 우선·60초 TTL을 적용합니다. 적중 시 호출 예산·토큰 조회/발급·HTTP를 사용하지 않습니다. 미적중 시 단일 조회·공유 예산·소진 즉시 실패를 유지합니다.
+- 키는 `kiwoom:chart:daily-minute:v1`과 실제 주소·KRX·종목·요청 날짜·1분 주기·수정주가 1·15:30 기준 시각을 길이 구분하여 구성합니다. 공개 시세에는 자격증명을 포함하지 않으며 다른 Provider/캐시와 격리합니다.
+- 필터·정규화 후 과거→최신 최대 120건을 JSON 문자열로 저장합니다. 문자열 가격·큰 정수·null/빈 값·중복·null 행을 보존하고, 정상 빈 목록은 저장하며 누락 목록과 HTTP/업무/토큰/변환 실패는 저장하지 않습니다.
+- Redis TTL·절대 만료를 검사하며 조회로 만료를 연장하지 않습니다. 손상·만료·조회 장애는 miss, 저장 장애는 정상 응답 유지입니다. 만료 캐시의 장애 fallback은 추가하지 않습니다. 장중 봉·빈 목록도 TTL 동안 재사용합니다.
+- 최근 분봉은 캐시를 읽거나 쓰지 않으며 요청마다 기존 ka10080 예산을 소비합니다. 일별/최근 간 예산 공유를 유지합니다.
+- `KiwoomDailyMinuteCacheTest`는 고정 시각·메모리 Redis/잠금·HTTP 대역으로 위 정책을 검증합니다. 기존 분봉 계약 테스트는 저장 실패 대역에서 HTTP/한도/정규화 회귀를 유지합니다. 위 분봉 명령과 `Test-Trading.ps1`에 신규 회귀를 포함했습니다.
+
+실제 DB/Redis/증권사·전체 앱/스케줄러를 로드하지 않습니다. 실제 TTL/분산 실행·동시 miss 제어·장중 신선도 정책 개선·실데이터 동등성·실제 JDK 11·서버/브라우저·운영 등록/전환은 후속입니다.
 
 ## Kiwoom 기간별 차트 adapter 검증 (Issue #88)
 
