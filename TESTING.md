@@ -407,6 +407,27 @@ Issue #82는 시세 캐시·호출 제한·retry/401 복구·운영 등록/전�
 호출 제한은 아래 Issue #84 범위에서 연결합니다.
 실제 증권사/Redis·전체 앱/JDK 11·브라우저·격리 DB 체결은 별도 검증 범위입니다.
 
+## Kiwoom KRX 분봉 adapter 검증 (Issue #92)
+
+`KiwoomMinuteChartProvider`는 내부 명시 주입 전용 `MinuteChartProvider`입니다.
+공식 [ka10080 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)의
+KRX 종목·1분봉·수정주가 1·기준일자를 사용합니다. Spring bean/운영 Provider로 등록하지 않습니다.
+
+- 일별: 요청 날짜의 15:30 이하 최신 최대 120건을 선택한 뒤 과거→최신 순으로 반환합니다. 날짜·시각과 원 단위 가격은 문자열입니다.
+- 최근: 기존 서비스와 같은 JVM 기본 시간대의 현재 날짜·시각을 한 번 확보하고 당일 해당 시각 이하 최신 최대 30건을 반환합니다. 가격은 long이며 누락/빈 값은 0입니다.
+- KIS처럼 단일 HTTP 조회만 수행합니다. 첫 응답이 짧거나 비어도 연속 조회로 채우지 않습니다. 누락 목록은 일별 빈 목록/최근 null이며 null 행·중복을 보존합니다.
+- 기존 인증·불변 환경을 재사용합니다. 실전은 현재가/기간별 차트와 공유하고 모의는 두 분봉 경로가 ka10080 예산을 공유합니다. 한도 소진 시 토큰/HTTP 전에 즉시 실패하며 실패한 요청도 예산을 소비합니다.
+- 가격 방향 부호를 제거하고 정확한 정수 원으로 정규화합니다. 잘못된 날짜/시각·역순·종목 불일치·가격/long 범위 오류는 부분 반환 없이 실패합니다. 원격 오류/토큰·파싱 예외의 원문은 노출하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMinuteChartProviderTest,KiwoomRestRateLimitTest,KisMinuteChartProviderTest,KisMinuteChartControllerTest,KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,MarketDataRoutingTest' test
+```
+
+합성 인증·고정 시각·메모리 Redis/잠금·HTTP 대역으로 실제 KIS adapter와 DTO·MVC JSON을 비교합니다.
+기존 JS 분봉 소비 회귀는 `node --test scripts/tests/minute-chart.test.cjs`로 실행합니다.
+실제 설정·DB·증권사·Redis·전체 앱 context/스케줄러는 로드하지 않습니다.
+캐시·운영 등록/선택·retry/401·CB·WS는 후속입니다. 실제 두 증권사의 수정주가·봉 시각/수치·허봉·장 경계 동등성은 검증 필요입니다.
+
 ## Kiwoom 기간별 차트 adapter 검증 (Issue #88)
 
 `KiwoomPeriodChartProvider`는 KRX 수정주가 일·주·월·년봉의 `PeriodChartProvider` 계약을 구현합니다.
