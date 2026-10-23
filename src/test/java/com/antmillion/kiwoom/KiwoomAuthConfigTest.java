@@ -65,7 +65,7 @@ public class KiwoomAuthConfigTest {
             assertEquals(2, context.getBean(com.antmillion.kiwoom.config.KiwoomRestRateLimitConfig.class)
                     .tokensPerSecond("https://api.kiwoom.com"));
             assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomRestRateLimiter.class).size());
-            assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
+            assertEquals(1, context.getBeansOfType(KiwoomCurrentPriceProvider.class).size());
             assertTrue(redis.reads.isEmpty());
             assertTrue(locks.keys.isEmpty());
             server.verify();
@@ -115,7 +115,7 @@ public class KiwoomAuthConfigTest {
     }
 
     @Test
-    public void enabledAuthDoesNotRegisterCurrentPriceAdapterOrReplaceKisSelection() {
+    public void enabledAuthRegistersKiwoomAdaptersWithoutReplacingDefaultKisSelection() {
         try (AnnotationConfigApplicationContext context = context(enabled(), null)) {
             KiwoomTokenServiceTest.MutableClock clock = new KiwoomTokenServiceTest.MutableClock();
             KiwoomTokenServiceTest.MemoryRedis redis = new KiwoomTokenServiceTest.MemoryRedis(clock);
@@ -141,14 +141,14 @@ public class KiwoomAuthConfigTest {
             for (Class<?> contract : registry.getSupportedContracts()) {
                 assertSame(registry.getProvider(contract), context.getBean(contract));
             }
-            assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomPeriodChartProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMinuteChartProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMarketIndexChartProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomStockRankingProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomInvestorFlowProvider.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository.class).isEmpty());
-            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository.class).isEmpty());
+            assertEquals(1, context.getBeansOfType(KiwoomCurrentPriceProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomPeriodChartProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMinuteChartProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMarketIndexChartProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomStockRankingProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomInvestorFlowProvider.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository.class).size());
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository.class).size());
             assertTrue(redis.reads.isEmpty());
             server.verify();
         }
@@ -225,7 +225,7 @@ public class KiwoomAuthConfigTest {
         }
     }
 
-    private static Map<String, Object> enabled() {
+    static Map<String, Object> enabled() {
         Map<String, Object> props = new HashMap<>();
         props.put("kiwoom.auth.enabled", "true");
         props.put("kiwoom.app-key", "synthetic-key");
@@ -233,7 +233,7 @@ public class KiwoomAuthConfigTest {
         return props;
     }
 
-    private static AnnotationConfigApplicationContext context(Map<String, Object> props, String optionalFile) {
+    static AnnotationConfigApplicationContext context(Map<String, Object> props, String optionalFile) {
         AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
         context.getEnvironment().getPropertySources().remove("systemProperties");
         context.getEnvironment().getPropertySources().remove("systemEnvironment");
@@ -263,7 +263,7 @@ public class KiwoomAuthConfigTest {
         return context;
     }
 
-    private static void infrastructure(AnnotationConfigApplicationContext context,
+    static void infrastructure(AnnotationConfigApplicationContext context,
             KiwoomTokenServiceTest.MemoryRedis redis, KiwoomTokenServiceTest.LockClient locks, RestTemplate rest) {
         context.getBeanFactory().registerSingleton("redisTemplate", redis);
         context.getBeanFactory().registerSingleton("redissonClient", locks.client());

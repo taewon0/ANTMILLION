@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
+/** 인증 활성화 시 REST Provider로 등록하며 설정으로 선택합니다. */
 public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
     private static final int MAX_CANDLES = 100;
     private final KiwoomTokenService tokens;

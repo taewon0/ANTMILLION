@@ -618,3 +618,27 @@ mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
 DB/실제 Redis/증권사·전체 앱/보안 context·운영 스케줄러는 로드하지 않습니다. `Test-Trading.ps1`에도 신규 회귀를 등록합니다.
 캐시 보관 시간은 수신 데이터의 거래일/신선도를 보증하지 않으며 장중 값과 null/빈 수량도 최대 600초 재사용합니다.
 실제 Redis/실연동·실제 JDK 11·전체 앱/JSP·브라우저·격리 DB 체결·동시 miss/신선도 개선·운영 등록/전환·retry/401·CB·WS는 후속입니다.
+
+## Kiwoom REST Provider 등록·수동 선택 검증 (Issue #108)
+
+`KiwoomMarketDataProviderConfig`는 `kiwoom.auth.enabled=true`일 때 여섯 REST adapter와 캐시를 등록합니다.
+기존 인증 전용 HTTP(연결/읽기 각 5초), 토큰/잠금, singleton 호출 제한을 재사용하며 bean 생성 시 토큰·시세를 조회하지 않습니다.
+기본 선택은 KIS입니다. `kisApi.properties`의 `marketdata.provider=kiwoom` 또는 JVM `-Dmarketdata.provider=kiwoom`으로 선택하고 재기동합니다.
+Kiwoom을 선택하려면 별도 `kiwoomApi.properties`의 인증 활성화와 유효한 환경/자격증명이 필요합니다.
+JVM 설정은 파일보다 우선하며, 비활성 Kiwoom·미등록/빈 선택·잘못된 인증 설정은 기동에 실패합니다.
+인증만 활성화해도 기본 KIS 선택은 유지하며 Kiwoom을 자동 호출하지 않습니다.
+
+- REST 선택은 현재가·기간봉·일별/최근 분봉·지수·두 순위·외국인/기관 계약의 기존 사용처에 적용됩니다. 기존 URL/JSON은 유지합니다.
+- REST와 WS 선택은 독립입니다. `marketdata.realtime-provider=kis`를 유지하며 `kiwoom` WS 선택은 기동을 거부합니다. `dev-mock`의 WS 제외 정책도 유지합니다.
+- KIS 직접 호출 기능·종목 동기화·WS/체결과 KIS 설정은 기존 구성을 유지합니다. REST 선택만으로 앱 전체 KIS 연동이 비활성화되지는 않습니다.
+- Kiwoom 로컬 한도 거절은 `GlobalExceptionHandler`에서 429와 `Retry-After`, 기존 형태의 `error`/`message`/`retryAfter` JSON으로 반환합니다. 문구는 키움증권을 표시합니다. 기존 KIS 응답은 유지합니다.
+- 현재가의 API 우선/한도 소진 시 캐시 반환·목록 부분 실패, 나머지 캐시 우선·최근 분봉 비캐시와 기존 TTL/키/공유 예산은 유지합니다. 자동 fallback/retry/CB는 추가하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomMarketDataRoutingTest,KiwoomAuthConfigTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+node --test scripts/tests/period-chart.test.cjs scripts/tests/minute-chart.test.cjs scripts/tests/market-index-chart.test.cjs scripts/tests/stock-ranking.test.cjs scripts/tests/investor-signal.test.cjs
+mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
+```
+
+새 테스트는 개인 파일/환경을 가린 최소 Spring context, 실제 등록/adapter, 합성 토큰·메모리 Redis/잠금·HTTP/WS 대역을 사용합니다.
+DB·실제 Redis·증권사·전체 보안/앱 context·운영 스케줄러는 로드하지 않습니다. 실제 외부 연결·전체 서버/JSP/브라우저·실제 JDK 11은 별도 검증 범위입니다.

@@ -18,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
+/** 인증 활성화 시 REST Provider로 등록하며 설정으로 선택합니다. */
 public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
