@@ -417,17 +417,32 @@ Spring bean/운영 Provider로 등록하지 않으며 기존 전역 REST/WS 선�
 - 기존 KIS와 같이 시세 API를 한 번만 호출합니다. 종료일을 `base_dt`로 전달하고, 응답 `dt`가 시작·종료일 양끝을 포함하는 최신 최대 100건을 반환합니다. `cont-yn`/`next-key`는 사용하지 않으며 연속 조회로 기간을 채우지 않습니다. 100건보다 적은 첫 응답도 정상 결과입니다.
 - 응답의 최신순·중복·null 행·빈/누락 가격을 보존합니다. 가격은 방향 부호를 제거한 정확한 원 단위 정수 문자열로 변환하며, 소수 원·잘못된 가격/날짜·다른 종목·역순 날짜·누락 목록은 실패합니다.
 - 공통 Controller의 일봉 100일·주봉 52주·월봉 48개월·년봉 30년 조회 기간을 유지합니다. 봉을 재집계하거나 날짜를 바꾸지 않습니다. [KIS 공식 예제](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/inquire_daily_itemchartprice/inquire_daily_itemchartprice.py)의 단일 호출 최대 100건을 반환 기준으로 사용합니다.
-- 단일 시세 조회가 토큰 조회/HTTP 전에 호출 예산을 한 번 소비합니다. 실전은 현재가와 환경·앱 키별 예산을 공유하고, 모의는 TR별 1회/초를 적용합니다. 기존 현재가 예산 키와 토큰/캐시 키는 유지합니다.
-- 한도 소진은 기존 Kiwoom 정책대로 즉시 실패합니다. 대기·retry·캐시·HTTP 매핑·401 복구·자동 전환은 추가하지 않습니다.
+- 캐시 미적중 시 단일 시세 조회가 토큰 조회/HTTP 전에 호출 예산을 한 번 소비합니다. 실전은 현재가와 환경·앱 키별 예산을 공유하고, 모의는 TR별 1회/초를 적용합니다. 기존 현재가 예산 키와 토큰/캐시 키는 유지합니다.
+- 캐시 미적중 시 한도 소진은 기존 Kiwoom 정책대로 즉시 실패합니다. 대기·retry·HTTP 매핑·401 복구·자동 전환은 추가하지 않습니다.
 
 ```powershell
-mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,KiwoomCurrentPriceCacheTest,KiwoomRestRateLimitTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomPeriodChartProviderTest,KiwoomPeriodChartCacheTest,KiwoomCurrentPriceProviderTest,KiwoomCurrentPriceCacheTest,KiwoomRestRateLimitTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
 mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
 ```
 
 실제 KIS 서비스/adapter와 Kiwoom adapter를 HTTP·메모리 Redis 대역으로 함께 실행하여 동일 Controller 요청의 기간·봉 날짜/OHLC·최신순·문자열/null과 기존 MVC JSON을 비교합니다. 연속 헤더가 있어도 추가 HTTP 없이 정상 반환하고 99/100/101건 경계를 적용하는지 검증합니다. 합성 데이터 기반 계약 비교이며 실제 증권사 간 수치·권리 조정 일치를 입증하지 않습니다.
 테스트는 합성 자격증명·고정 시각·메모리 Redis/잠금·MockRestServiceServer·실제 파일을 가린 최소 Spring context를 사용합니다.
 개발 DB 설정·DB·실제 Redis/증권사·전체 앱/스케줄러를 로드하지 않습니다. 실제 연동·JDK 11·서버/브라우저·분산 실행은 별도 검증 범위입니다.
+
+## Kiwoom 기간별 차트 캐시 검증 (Issue #90)
+
+내부 adapter 생성 시 `KiwoomPeriodChartRedisRepository`를 함께 명시 주입합니다.
+캐시 저장소도 Spring bean/운영 Provider로 등록하지 않습니다.
+
+- 기존 KIS 기간별 차트와 같이 캐시 우선·24시간 TTL을 적용합니다. 적중 시 호출 예산·토큰 조회/발급·시세 HTTP를 사용하지 않습니다. 정상 빈 목록도 적중으로 취급하며 장중 응답도 TTL 동안 재사용합니다.
+- 키는 `kiwoom:chart:period:v1`과 실제 주소·KRX·종목·봉 주기·시작/종료일·수정주가 `1`을 길이 구분하여 구성합니다. 공개 차트 데이터에는 자격증명을 포함하지 않으며 KIS/현재가/토큰 키를 재사용하지 않습니다.
+- 정규화와 기간 필터를 마친 최신 최대 100건을 JSON 문자열로 저장하고 순서·중복·null 행·가격의 문자열/null/빈 값을 보존합니다. 정상 빈 목록은 저장하되 HTTP/업무/토큰/변환 실패는 저장하지 않습니다.
+- Redis TTL과 저장한 절대 만료 시각을 검사하며 조회로 TTL을 연장하지 않습니다. 만료·손상·조회 장애는 miss, 저장 장애는 정상 응답 유지로 처리합니다. 미적중 시 기존 단일 조회·공유 한도·소진 즉시 실패를 유지합니다.
+- `KiwoomPeriodChartCacheTest`는 고정 시각·메모리 Redis/잠금·HTTP 대역으로 TTL 경계·조건 격리·직렬화·손상/장애·적중 시 예산/토큰/HTTP 미사용과 기존 응답 호환성을 확인합니다. 기존 adapter 계약 회귀는 차트 캐시 저장 불가 대역에서 기존 HTTP/제한/정규화 동작을 계속 검증합니다.
+
+위 기간별 차트 명령과 `Test-Trading.ps1`에 신규 회귀를 포함했습니다.
+실제 Redis/증권사·전체 앱/JDK 11·브라우저·분산 실행은 별도 검증 범위입니다.
+동시 miss 제어·장중 신선도 개선·retry/401·CB·운영 등록/전환은 후속입니다.
 
 ## Kiwoom 현재가 REST 호출 제한 검증 (Issue #84)
 
