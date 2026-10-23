@@ -12,6 +12,7 @@ import com.antmillion.kis.service.RateLimitedKisApiClient;
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
+import com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomInvestorFlowProvider;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimitTest;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
@@ -511,7 +512,11 @@ public class KiwoomInvestorFlowProviderTest {
     }
 
     private InvestorFlowProvider provider(KiwoomTokenService target) {
-        return new KiwoomInvestorFlowProvider(target, rest, limiter);
+        // 원격 계약 회귀는 저장 장애 대역으로 매번 HTTP를 확인합니다. 캐시 통합은 전용 테스트에서 검증합니다.
+        KiwoomTokenServiceTest.MemoryRedis cacheRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
+        cacheRedis.failWrites = true;
+        return new KiwoomInvestorFlowProvider(target, rest, limiter,
+                new KiwoomInvestorFlowRedisRepository(cacheRedis, clock));
     }
 
     private KiwoomTokenService tokens(KiwoomAccessTokenScope target) {
