@@ -1,6 +1,7 @@
 package com.antmillion.kis.manager;
 
 import com.antmillion.kis.dto.KisWebSocketTransactionPriceRequest;
+import com.antmillion.kis.dto.KisWebSocketConnectionScope;
 import com.antmillion.kis.constant.KisWebSocketTrId;
 import com.antmillion.kis.handler.KisWebSocketHandler;
 import com.antmillion.kis.service.KisApiService;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 import java.io.IOException;
@@ -383,11 +385,12 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
         ListenableFuture<WebSocketSession> future = null;
         WebSocketSession opened = null;
         try {
-            String key = requestApprovalKey();
+            KisWebSocketConnectionScope scope = connectionScope();
+            String key = requestApprovalKey(scope);
             synchronized (state) {
                 if (!running || generation != startedGeneration || activeAttempt != attempt || !hasLiveSubscriptions()) return null;
             }
-            future = handshake(new KisWebSocketHandler(this, objectMapper, receiver, attempt));
+            future = handshake(new KisWebSocketHandler(this, objectMapper, receiver, attempt), scope.getWebSocketUrl());
             synchronized (state) {
                 if (!running || generation != startedGeneration || activeAttempt != attempt) return null;
                 connecting = future;
@@ -557,9 +560,10 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
     protected LocalTime marketTime() { return LocalTime.now(ZoneId.of("Asia/Seoul")); }
     protected long handshakeTimeoutMillis() { return 5000; }
     protected long acknowledgementTimeoutMillis() { return 5000; }
-    protected String requestApprovalKey() { return kisApiService.getKisApprovalKey(); }
+    protected KisWebSocketConnectionScope connectionScope() { return kisApiService.webSocketConnectionScope(); }
+    protected String requestApprovalKey(KisWebSocketConnectionScope scope) { return kisApiService.getKisApprovalKey(scope); }
 
-    protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler) {
+    protected WebSocketClient createWebSocketClient() {
         StandardWebSocketClient client = new StandardWebSocketClient();
         synchronized (state) {
             if (!running) throw new IllegalStateException("KIS recovery is stopped");
@@ -569,7 +573,11 @@ public class KisWebSocketManager implements SmartLifecycle, EnvironmentAware {
         properties.put("org.apache.tomcat.websocket.textBufferSize", 65536);
         properties.put("org.apache.tomcat.websocket.binaryBufferSize", 65536);
         client.setUserProperties(properties);
-        return client.doHandshake(handler, "ws://ops.koreainvestment.com:21000");
+        return client;
+    }
+
+    protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler, String webSocketUrl) {
+        return createWebSocketClient().doHandshake(handler, webSocketUrl);
     }
 
     private static class Subscription {

@@ -270,6 +270,23 @@ KIS REST·Redis 구성·마스터 동기화의 생성/실행은 이 WS 선택의
 선택된 KIS의 worker는 외부 구독 없이 시작/종료하며, 미선택 KIS는 희망 구독이 있어도 worker 생성·approval·handshake가 0인지 확인합니다.
 개발 properties·DB·실제 Redis/증권사·전체 앱 context는 로드하지 않습니다. Java 회귀는 `Test-Trading.ps1`에도 포함됩니다.
 
+KIS WS 실전·모의 환경의 approval·연결 일치는 아래 명령으로 검증합니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KisWebSocketEnvironmentTest,KisWebSocketRecoveryTest,RealtimeRoutingTest' test
+```
+
+`kis.mode`의 기존 선택 규칙을 사용해 실전은 approval 9443 / WS 21000,
+모의는 approval 29443 / WS 31000으로 연결합니다. 해당 환경의 앱 키·시크릿을 설정하고 변경 후 재시작합니다.
+한 연결 시도의 환경·자격증명을 고정하여 approval 대기 중 설정이 바뀌어도 handshake와 섞이지 않습니다.
+실제 발급 서비스와 Manager의 handshake URI까지 HTTP/WS 대역으로 확인하며,
+환경별 장애·재연결·마지막 참조 해제·15:30/자정 전환을 검증합니다.
+개발 properties·DB·Redis·실제 KIS·전체 앱 context는 로드하지 않으며 `Test-Trading.ps1`에도 포함됩니다.
+모의도 기존 15:30 이후 통합·자정 KRX 전환 정책을 유지합니다. 공식 샘플의 KRX TR 모의 지원과 별개로
+통합 TR의 모의 지원·실수신은 검증 필요 사항이며 이 대역 테스트로 보장하지 않습니다.
+주소·TR 근거는 [공식 설정](https://github.com/koreainvestment/open-trading-api/blob/main/kis_devlp.yaml)과
+[공식 WS 샘플](https://github.com/koreainvestment/open-trading-api/blob/main/examples_user/domestic_stock/domestic_stock_functions_ws.py)입니다.
+
 KIS 액세스 토큰·발급 잠금 격리는 아래 명령으로 별도 검증합니다.
 
 ```powershell

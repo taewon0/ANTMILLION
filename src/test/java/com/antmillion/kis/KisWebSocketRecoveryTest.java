@@ -1,6 +1,7 @@
 package com.antmillion.kis;
 
 import com.antmillion.kis.handler.KisWebSocketHandler;
+import com.antmillion.kis.dto.KisWebSocketConnectionScope;
 import com.antmillion.marketdata.service.RealtimeMarketDataService;
 import com.antmillion.kis.manager.KisWebSocketManager;
 import com.antmillion.marketdata.service.RealtimeSubscriptionRegistry;
@@ -119,12 +120,15 @@ public class KisWebSocketRecoveryTest {
         @Override protected long nowMillis() { return now; }
         @Override protected LocalTime marketTime() { return market; }
         @Override protected long handshakeTimeoutMillis() { return 2000; }
-        @Override protected String requestApprovalKey() {
+        @Override protected KisWebSocketConnectionScope connectionScope() {
+            return new KisWebSocketConnectionScope(true, "synthetic-key", "synthetic-secret");
+        }
+        @Override protected String requestApprovalKey(KisWebSocketConnectionScope scope) {
             approvals++;
             if (failApproval) throw new IllegalStateException("synthetic approval failure");
             return "synthetic-approval";
         }
-        @Override protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler) {
+        @Override protected ListenableFuture<WebSocketSession> handshake(KisWebSocketHandler handler, String webSocketUrl) {
             attempts++;
             this.handler = handler;
             future = new SettableListenableFuture<>();

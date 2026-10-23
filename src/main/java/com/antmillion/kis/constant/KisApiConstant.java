@@ -4,6 +4,8 @@ public class KisApiConstant {
 
     public static final String REAL_BASE_URL = "https://openapi.koreainvestment.com:9443";
     public static final String VIRTUAL_BASE_URL = "https://openapivts.koreainvestment.com:29443";
+    public static final String REAL_WEB_SOCKET_URL = "ws://ops.koreainvestment.com:21000";
+    public static final String VIRTUAL_WEB_SOCKET_URL = "ws://ops.koreainvestment.com:31000";
 
     public static final String OAUTH_TOKEN_PATH = "/oauth2/tokenP";
     public static final String WEB_SOCKET_PATH = "/oauth2/Approval";

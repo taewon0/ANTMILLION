@@ -9,6 +9,7 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 import com.antmillion.kis.constant.KisApiConstant;
+import com.antmillion.kis.dto.KisWebSocketConnectionScope;
 import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
 @EnableWebSocketMessageBroker
@@ -33,6 +34,10 @@ public class KisWebSocketConfig implements WebSocketMessageBrokerConfigurer {
             return KisApiConstant.REAL_BASE_URL;
         }
         return KisApiConstant.VIRTUAL_BASE_URL;
+    }
+
+    public KisWebSocketConnectionScope connectionScope() {
+        return new KisWebSocketConnectionScope("real".equalsIgnoreCase(mode), appKey, secretKey);
     }
 
     @Override
