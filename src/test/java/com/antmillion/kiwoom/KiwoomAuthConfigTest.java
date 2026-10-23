@@ -145,6 +145,7 @@ public class KiwoomAuthConfigTest {
             assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomPeriodChartProvider.class).isEmpty());
             assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMinuteChartProvider.class).isEmpty());
             assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomMarketIndexChartProvider.class).isEmpty());
+            assertTrue(context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomStockRankingProvider.class).isEmpty());
             assertTrue(redis.reads.isEmpty());
             server.verify();
         }
