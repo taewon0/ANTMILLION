@@ -569,3 +569,28 @@ mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomRestRateLimitTest,Ki
 합성 시각을 전진시켜 충분히 리필하고, 호출 제한 회귀는 고정 시각으로 한도를 확인합니다.
 개발 설정·DB·실제 Redis/증권사·전체 앱/스케줄러는 로드하지 않습니다.
 신규 회귀를 `Test-Trading.ps1`에도 등록합니다. 발급 제한·캐시·retry/401·운영 등록/전환·차트/WS·CB는 후속입니다.
+
+## Kiwoom 외국인·기관 장중 순매수 adapter 검증 (Issue #104)
+
+`KiwoomInvestorFlowProvider`는 내부 명시 주입 전용 `InvestorFlowProvider`입니다.
+[공식 ka10064 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)의
+`/api/dostk/chart`에 전체 시장 `mrkt_tp=000`·수량 `amt_qty_tp=2`·순매수 `trde_tp=0`·KRX 단축 종목코드를 보냅니다.
+
+- 사용자 합의로 유효한 `HHmmss` 중 최신 시각의 외국인·기관 값을 사용합니다. KIS 추정 가집계와 실데이터 일치를 보장하지 않습니다.
+- 완결된 단일 응답만 사용합니다. `cont-yn=Y` 또는 알 수 없는 비어 있지 않은 값은 실패하며 연속 조회하지 않습니다. 헤더 없음/빈 값/`N`은 완결로 취급합니다.
+- 응답 순서에 의존하지 않으며 빈 목록은 세 수량이 null인 DTO로 반환합니다. 누락 값은 null, 공백은 빈 문자열로 보존하고 이전 행으로 대체하지 않습니다.
+- 주 단위 수량의 부호는 보존하고 정수 문자열로 정규화합니다. 두 수량이 모두 있으면 임의 정밀도 정수로 합산하며, 하나라도 누락/빈 값이면 합계는 null입니다.
+- 잘못된 시각·수량·null 행·상충하는 동일 최신 시각·목록/업무/HTTP/토큰 오류는 부분 결과 없이 실패합니다. 원격 메시지/원인 예외는 노출하지 않습니다.
+- 기존 공통 신호등 서비스의 long 파싱·색상·누락/빈 값/범위 초과 정책과 URL/JSON은 유지합니다. 큰 개별 수량을 신호등에서 처리하도록 확장하지 않습니다.
+- 토큰 조회 전에 기존 singleton 예산을 소비합니다. 실전은 다른 조회와 공유하고 모의는 ka10064 예산을 공유하며 실패해도 환급하지 않습니다.
+- 캐시·기동 호출·Spring 시세 bean/운영 Provider 등록·HTTP 오류 매핑·retry/401 복구·WS·CB는 추가하지 않습니다.
+
+```powershell
+mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomInvestorFlowProviderTest,KiwoomAuthConfigTest,KiwoomRestRateLimitTest,KisInvestorFlowProviderTest,KisInvestorSignalControllerTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
+node --test scripts/tests/investor-signal.test.cjs
+mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
+```
+
+합성 인증·고정 시각·메모리 Redis/잠금·MockRestServiceServer·standalone MVC와 실제 파일을 가린 최소 인증 context만 사용합니다.
+실제 KIS/HTTP adapter와 합성 DTO·신호등 JSON을 비교하며 실데이터 동등성을 입증하지 않습니다. 개발 properties·DB·실제 Redis/증권사·전체 앱/보안 context·운영 스케줄러는 로드하지 않습니다.
+응답에 날짜가 없어 거래일/신선도·실제 제공 범위·모의 지원은 검증 필요입니다. 실제 Redis·전체 앱/JSP·브라우저·실제 JDK 11·격리 DB 체결은 별도 검증 범위입니다.
