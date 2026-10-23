@@ -12,6 +12,7 @@ import com.antmillion.kis.service.RateLimitedKisApiClient;
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
+import com.antmillion.kiwoom.repository.KiwoomDailyMinuteRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomMinuteChartProvider;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimitTest;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
@@ -475,7 +476,11 @@ public class KiwoomMinuteChartProviderTest {
     }
 
     private MinuteChartProvider provider(KiwoomAccessTokenScope requestScope, Clock queryClock) {
-        return new KiwoomMinuteChartProvider(tokens(requestScope), rest, limiter, queryClock);
+        // 기존 계약 회귀는 캐시 저장 불가 대역에서 매번 HTTP/제한/변환 동작을 검증합니다.
+        KiwoomTokenServiceTest.MemoryRedis chartRedis = new KiwoomTokenServiceTest.MemoryRedis(tokenClock);
+        chartRedis.failWrites = true;
+        return new KiwoomMinuteChartProvider(tokens(requestScope), rest, limiter,
+                new KiwoomDailyMinuteRedisRepository(chartRedis, tokenClock), queryClock);
     }
 
     private void cacheToken(KiwoomAccessTokenScope requestScope) {
