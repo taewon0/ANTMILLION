@@ -47,6 +47,11 @@ public class KiwoomTokenService {
         this.clock = clock;
     }
 
+    /** 시세 요청도 토큰 발급과 동일한 불변 환경을 사용합니다. */
+    public String getBaseUrl() {
+        return scope.getBaseUrl();
+    }
+
     public String getAccessToken() {
         Optional<String> saved = tokens.findAccessToken(scope, refreshBufferSeconds);
         if (saved.isPresent()) return saved.get();
