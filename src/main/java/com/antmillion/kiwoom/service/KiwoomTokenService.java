@@ -52,6 +52,11 @@ public class KiwoomTokenService {
         return scope.getBaseUrl();
     }
 
+    /** 인증과 같은 불변 환경·앱 키를 사용하며 원문을 외부에 전달하지 않습니다. */
+    public String getCurrentPriceBudgetKey() {
+        return scope.getCurrentPriceBudgetKey();
+    }
+
     public String getAccessToken() {
         Optional<String> saved = tokens.findAccessToken(scope, refreshBufferSeconds);
         if (saved.isPresent()) return saved.get();

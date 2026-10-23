@@ -15,6 +15,7 @@ public final class KiwoomAccessTokenScope {
     private final String appSecret;
     private final String tokenKey;
     private final String lockKey;
+    private final String currentPriceBudgetKey;
 
     public KiwoomAccessTokenScope(String mode, String appKey, String appSecret) {
         if ("real".equalsIgnoreCase(mode)) {
@@ -29,15 +30,18 @@ public final class KiwoomAccessTokenScope {
         }
         this.appKey = appKey;
         this.appSecret = appSecret;
-        String identity = identity();
+        String identity = identity("kiwoom", baseUrl, appKey, appSecret);
         tokenKey = "kiwoom:access_token:v1:" + identity;
         lockKey = "kiwoom:token:lock:v1:" + identity;
+        // 실전은 국내주식 조회, 모의는 현재가 TR 예산입니다. 시크릿/토큰 교체로 초기화하지 않습니다.
+        currentPriceBudgetKey = identity("kiwoom", baseUrl, appKey,
+                "real".equalsIgnoreCase(mode) ? "dostk-query" : "ka10001");
     }
 
-    private String identity() {
+    private static String identity(String... values) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            for (String value : new String[]{"kiwoom", baseUrl, appKey, appSecret}) {
+            for (String value : values) {
                 byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
                 digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
                 digest.update(bytes);

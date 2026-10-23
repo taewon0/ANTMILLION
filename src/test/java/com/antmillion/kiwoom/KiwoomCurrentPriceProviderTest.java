@@ -4,6 +4,10 @@ import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomCurrentPriceProvider;
 import com.antmillion.kiwoom.service.KiwoomTokenService;
+import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
+import com.antmillion.kiwoom.service.KiwoomRestRateLimitTest;
+import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
+import io.github.bucket4j.TimeMeter;
 import com.antmillion.marketdata.dto.CurrentQuote;
 import com.antmillion.marketdata.provider.CurrentPriceProvider;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -36,6 +40,9 @@ public class KiwoomCurrentPriceProviderTest {
     private MockRestServiceServer server;
     private CurrentPriceProvider provider;
     private KiwoomAccessTokenScope scope;
+    private KiwoomRestRateLimiter limiter;
+    private final java.util.concurrent.atomic.AtomicLong budgetNanos = new java.util.concurrent.atomic.AtomicLong();
+    private boolean advanceBudgetTime = true;
 
     @Before
     public void setUp() {
@@ -46,6 +53,13 @@ public class KiwoomCurrentPriceProviderTest {
         rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
         scope = scope("virtual");
+        // 기존 응답 계약은 요청마다 합성 리필을 허용하고, 아래 제한 회귀는 고정 시각으로 검증합니다.
+        limiter = KiwoomRestRateLimitTest.withClock(new TimeMeter() {
+            @Override public long currentTimeNanos() {
+                return advanceBudgetTime ? budgetNanos.getAndAdd(1_000_000_000L) : budgetNanos.get();
+            }
+            @Override public boolean isWallClockBased() { return false; }
+        });
         cacheToken(scope, "synthetic-token");
         provider = provider(scope);
     }
@@ -230,7 +244,7 @@ public class KiwoomCurrentPriceProviderTest {
             }
         };
         quote("000660", "200", "0");
-        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest);
+        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest, limiter);
         assertEquals(List.of(new CurrentQuote("000660", "200", "0")),
                 adapter.getCurrentPrices(List.of("005930", "000660")));
         assertEquals(2, calls.get());
@@ -308,6 +322,76 @@ public class KiwoomCurrentPriceProviderTest {
         server.verify();
     }
 
+    @Test
+    public void singleAndListShareBudgetAndRejectBeforeTokenReadOrHttp() {
+        advanceBudgetTime = false;
+        quote("005930", "100", "0");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        int reads = redis.reads.size();
+        redis.failReads = true;
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("000660"));
+        KiwoomAccessTokenScope uncached = new KiwoomAccessTokenScope("virtual", "synthetic-key", "rotated-secret");
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider(uncached).getCurrentPrice("005930"));
+        assertTrue(provider.getCurrentPrices(List.of("000660", "005930")).isEmpty());
+        assertEquals(reads, redis.reads.size());
+        assertTrue(locks.keys.isEmpty());
+        server.verify();
+    }
+
+    @Test
+    public void listChargesEveryItemAndPreservesAcceptedOrderDuplicatesAndPartialFailures() {
+        advanceBudgetTime = false;
+        KiwoomAccessTokenScope real = scope("real");
+        cacheToken(real, "real-token");
+        expect(real, "005930", "real-token").andRespond(withSuccess("{\"cur_prc\":\"100\"}", MediaType.APPLICATION_JSON));
+        expect(real, "000660", "real-token").andRespond(withServerError());
+        expect(real, "005930", "real-token").andRespond(withSuccess("{\"cur_prc\":\"200\"}", MediaType.APPLICATION_JSON));
+        expect(real, "035420", "real-token").andRespond(withSuccess("{\"cur_prc\":\"bad\"}", MediaType.APPLICATION_JSON));
+        expect(real, "005930", "real-token").andRespond(withSuccess("{\"cur_prc\":\"300\"}", MediaType.APPLICATION_JSON));
+        CurrentPriceProvider realProvider = provider(real);
+        assertEquals(List.of(new CurrentQuote("005930", "100", null), new CurrentQuote("005930", "200", null),
+                        new CurrentQuote("005930", "300", null)),
+                realProvider.getCurrentPrices(List.of("005930", "000660", "005930", "035420", "005930", "000660")));
+        assertThrows(KiwoomRateLimitExceededException.class, () -> realProvider.getCurrentPrice("005930"));
+        assertEquals(5, redis.reads.size());
+        server.verify();
+    }
+
+    @Test
+    public void invalidInputConsumesNoBudgetAndRefillResumesHttp() {
+        advanceBudgetTime = false;
+        assertTrue(provider.getCurrentPrices(Arrays.asList(null, "bad", "005930_NX")).isEmpty());
+        quote("005930", "100", "0");
+        quote("005930", "200", "0");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        budgetNanos.set(1_000_000_000L);
+        assertEquals(Integer.valueOf(200), provider.getCurrentPrice("005930"));
+        assertEquals(2, redis.reads.size());
+        server.verify();
+    }
+
+    @Test
+    public void failedTokenLookupConsumesBudgetAndNoRetryOccurs() {
+        advanceBudgetTime = false;
+        redis.failReads = true;
+        assertSanitizedFailure();
+        redis.failReads = false;
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        assertTrue(locks.keys.isEmpty());
+        server.verify();
+    }
+
+    @Test
+    public void actualTokenReplacementDoesNotResetBudget() {
+        advanceBudgetTime = false;
+        quote("005930", "100", "0");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        cacheToken(scope, "replacement-token");
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider(scope).getCurrentPrice("005930"));
+        server.verify();
+    }
+
     private void assertSanitizedFailure() {
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> provider.getCurrentPrice("005930"));
@@ -321,7 +405,7 @@ public class KiwoomCurrentPriceProviderTest {
 
     private CurrentPriceProvider provider(KiwoomAccessTokenScope tokenScope) {
         return new KiwoomCurrentPriceProvider(new KiwoomTokenService(tokenScope, 600, rest, repository,
-                locks.client(), clock), rest);
+                locks.client(), clock), rest, limiter);
     }
 
     private void cacheToken(KiwoomAccessTokenScope tokenScope, String token) {

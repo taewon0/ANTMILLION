@@ -52,7 +52,8 @@ public class KiwoomAuthConfigTest {
     @Test
     public void optionalFileEnablesAuthButDoesNotReadRedisOrAcquireLockAtStartup() {
         try (AnnotationConfigApplicationContext context = context(Map.of(),
-                "kiwoom.auth.enabled=true\nkiwoom.app-key=synthetic-key\nkiwoom.app-secret=synthetic-secret\n")) {
+                "kiwoom.auth.enabled=true\nkiwoom.app-key=synthetic-key\nkiwoom.app-secret=synthetic-secret\n"
+                        + "kiwoom.rest.rate-limit.real-per-second=2\n")) {
             KiwoomTokenServiceTest.MutableClock clock = new KiwoomTokenServiceTest.MutableClock();
             KiwoomTokenServiceTest.MemoryRedis redis = new KiwoomTokenServiceTest.MemoryRedis(clock);
             KiwoomTokenServiceTest.LockClient locks = new KiwoomTokenServiceTest.LockClient();
@@ -61,6 +62,9 @@ public class KiwoomAuthConfigTest {
             infrastructure(context, redis, locks, rest);
             context.refresh();
             assertNotNull(context.getBean(KiwoomTokenService.class));
+            assertEquals(2, context.getBean(com.antmillion.kiwoom.config.KiwoomRestRateLimitConfig.class)
+                    .tokensPerSecond("https://api.kiwoom.com"));
+            assertEquals(1, context.getBeansOfType(com.antmillion.kiwoom.service.KiwoomRestRateLimiter.class).size());
             assertTrue(context.getBeansOfType(KiwoomCurrentPriceProvider.class).isEmpty());
             assertTrue(redis.reads.isEmpty());
             assertTrue(locks.keys.isEmpty());

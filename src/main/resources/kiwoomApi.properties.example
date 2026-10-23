@@ -6,3 +6,7 @@ kiwoom.app-key=
 kiwoom.app-secret=
 # 공식 샘플과 같은 만료 전 재사용 중단 여유(초), 0~43200
 kiwoom.auth.refresh-buffer-seconds=600
+# 국내주식 조회 로컬 예산: 실전 1~5, 모의 ka10001 1건/초
+# 환경·앱 키별 JVM 공유이며 같은 계좌의 여러 앱 키/다른 프로세스 간 공유는 후속입니다.
+kiwoom.rest.rate-limit.real-per-second=5
+kiwoom.rest.rate-limit.virtual-per-second=1

@@ -92,6 +92,27 @@ public class KisRestRateLimitTest {
     }
 
     @Test
+    public void kiwoomAndKisNeverSpendEachOthersBudget() {
+        com.antmillion.kiwoom.service.KiwoomRestRateLimiter kiwoom =
+                com.antmillion.kiwoom.service.KiwoomRestRateLimitTest.withClock(clock);
+        for (boolean kisFirst : List.of(true, false)) {
+            String identity = kisFirst ? "kis-first" : "kiwoom-first";
+            KisRestRequestScope kisScope = scope(VIRTUAL, identity, "01");
+            com.antmillion.kiwoom.service.KiwoomTokenService tokens =
+                    new com.antmillion.kiwoom.service.KiwoomTokenService(
+                            new com.antmillion.kiwoom.dto.KiwoomAccessTokenScope("virtual", identity, "secret"),
+                            600, null, null, null, null);
+            if (kisFirst) limiter.callWithoutCache(kisScope, () -> "ok");
+            kiwoom.acquireCurrentPrice(tokens);
+            if (!kisFirst) assertEquals("ok", limiter.callWithoutCache(kisScope, () -> "ok"));
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException.class,
+                    () -> kiwoom.acquireCurrentPrice(tokens));
+            assertThrows(RateLimitExceededException.class, () -> limiter.callWithoutCache(kisScope, () -> "unexpected"));
+        }
+        assertEquals(0, redis.reads);
+    }
+
+    @Test
     public void credentialsCanRotateWithoutResettingTheAccountBudget() {
         KisRestRequestScope first = scope(VIRTUAL, "account-a", "01");
         KisRestRequestScope rotated = new KisRestRequestScope(VIRTUAL, "account-a", "01", "other-key", "other-secret");
