@@ -2,6 +2,7 @@ package com.antmillion.kiwoom;
 
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
+import com.antmillion.kiwoom.repository.KiwoomCurrentPriceRedisRepository;
 import com.antmillion.kiwoom.service.KiwoomCurrentPriceProvider;
 import com.antmillion.kiwoom.service.KiwoomTokenService;
 import com.antmillion.kiwoom.service.KiwoomRestRateLimiter;
@@ -36,6 +37,7 @@ public class KiwoomCurrentPriceProviderTest {
     private KiwoomTokenServiceTest.MemoryRedis redis;
     private KiwoomTokenServiceTest.LockClient locks;
     private KiwoomAccessTokenRedisRepository repository;
+    private KiwoomCurrentPriceRedisRepository cache;
     private RestTemplate rest;
     private MockRestServiceServer server;
     private CurrentPriceProvider provider;
@@ -50,6 +52,7 @@ public class KiwoomCurrentPriceProviderTest {
         redis = new KiwoomTokenServiceTest.MemoryRedis(clock);
         locks = new KiwoomTokenServiceTest.LockClient();
         repository = new KiwoomAccessTokenRedisRepository(redis, clock);
+        cache = new KiwoomCurrentPriceRedisRepository(redis, clock);
         rest = new RestTemplate();
         server = MockRestServiceServer.bindTo(rest).build();
         scope = scope("virtual");
@@ -70,7 +73,7 @@ public class KiwoomCurrentPriceProviderTest {
                 "{\"stk_cd\":\"005930\",\"cur_prc\":\"+071000\",\"flu_rt\":\"+1.25\","
                         + "\"stk_nm\":\"synthetic-name\",\"return_code\":0}", MediaType.APPLICATION_JSON));
         assertEquals(Integer.valueOf(71000), provider.getCurrentPrice("005930"));
-        assertEquals(1, redis.writes.get()); // 준비한 토큰 외에 시세 캐시는 저장하지 않습니다.
+        assertEquals(2, redis.writes.get()); // 준비한 토큰과 정상 단건 시세를 저장합니다.
         assertTrue(locks.keys.isEmpty());
         server.verify();
     }
@@ -244,7 +247,7 @@ public class KiwoomCurrentPriceProviderTest {
             }
         };
         quote("000660", "200", "0");
-        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest, limiter);
+        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest, limiter, cache);
         assertEquals(List.of(new CurrentQuote("000660", "200", "0")),
                 adapter.getCurrentPrices(List.of("005930", "000660")));
         assertEquals(2, calls.get());
@@ -309,7 +312,7 @@ public class KiwoomCurrentPriceProviderTest {
     }
 
     @Test
-    public void repeatedPriceRequestsCallHttpWithoutCachingOrExtendingTokenTtl() {
+    public void repeatedPriceRequestsPreferHttpAndRefreshOnlyPriceTtl() {
         Long expiry = redis.expirations.get(scope.getTokenKey());
         quote("005930", "100", "0");
         quote("005930", "200", "0");
@@ -317,8 +320,8 @@ public class KiwoomCurrentPriceProviderTest {
         clock.advanceSeconds(1);
         assertEquals(Integer.valueOf(200), provider.getCurrentPrice("005930"));
         assertEquals(expiry, redis.expirations.get(scope.getTokenKey()));
-        assertEquals(1, redis.writes.get());
-        assertEquals(1, redis.values.size());
+        assertEquals(3, redis.writes.get());
+        assertEquals(2, redis.values.size());
         server.verify();
     }
 
@@ -353,7 +356,7 @@ public class KiwoomCurrentPriceProviderTest {
                         new CurrentQuote("005930", "300", null)),
                 realProvider.getCurrentPrices(List.of("005930", "000660", "005930", "035420", "005930", "000660")));
         assertThrows(KiwoomRateLimitExceededException.class, () -> realProvider.getCurrentPrice("005930"));
-        assertEquals(5, redis.reads.size());
+        assertEquals(5, redis.reads.stream().filter(real.getTokenKey()::equals).count());
         server.verify();
     }
 
@@ -364,10 +367,10 @@ public class KiwoomCurrentPriceProviderTest {
         quote("005930", "100", "0");
         quote("005930", "200", "0");
         assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
-        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
         budgetNanos.set(1_000_000_000L);
         assertEquals(Integer.valueOf(200), provider.getCurrentPrice("005930"));
-        assertEquals(2, redis.reads.size());
+        assertEquals(2, redis.reads.stream().filter(scope.getTokenKey()::equals).count());
         server.verify();
     }
 
@@ -388,7 +391,108 @@ public class KiwoomCurrentPriceProviderTest {
         quote("005930", "100", "0");
         assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
         cacheToken(scope, "replacement-token");
-        assertThrows(KiwoomRateLimitExceededException.class, () -> provider(scope).getCurrentPrice("005930"));
+        assertEquals(Integer.valueOf(100), provider(scope).getCurrentPrice("005930"));
+        server.verify();
+    }
+
+    @Test
+    public void singleFallbackDoesNotReadTokenCallHttpOrExtendEitherTtl() {
+        advanceBudgetTime = false;
+        quote("005930", "-071000", "bad-unused-rate");
+        assertEquals(Integer.valueOf(71000), provider.getCurrentPrice("005930"));
+        java.util.Map<String, Long> expirations = new java.util.HashMap<>(redis.expirations);
+        int writes = redis.writes.get();
+        redis.reads.clear();
+        clock.advanceSeconds(9);
+        assertEquals(Integer.valueOf(71000), provider.getCurrentPrice("005930"));
+        assertEquals(1, redis.reads.size());
+        assertTrue(redis.reads.get(0).startsWith("kiwoom:price:single:v1:"));
+        assertEquals(expirations, redis.expirations);
+        assertEquals(writes, redis.writes.get());
+        assertTrue(locks.keys.isEmpty());
+        clock.advanceSeconds(1);
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        server.verify();
+    }
+
+    @Test
+    public void listFallbackPreservesOrderDuplicatesAndOmitsOnlyMissingCache() {
+        advanceBudgetTime = false;
+        quote("005930", "-100", "-01.20");
+        CurrentQuote expected = new CurrentQuote("005930", "100", "-01.20");
+        assertEquals(List.of(expected), provider.getCurrentPrices(List.of("005930")));
+        redis.reads.clear();
+        assertEquals(List.of(expected, expected),
+                provider.getCurrentPrices(List.of("000660", "005930", "005930")));
+        assertTrue(redis.reads.stream().allMatch(key -> key.startsWith("kiwoom:price:quote:v1:")));
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        server.verify();
+    }
+
+    @Test
+    public void singleCacheCannotSupplyListChangeRate() {
+        advanceBudgetTime = false;
+        quote("005930", "100", "0");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        assertTrue(provider.getCurrentPrices(List.of("005930")).isEmpty());
+        server.verify();
+    }
+
+    @Test
+    public void fallbackUsesOnlySameEnvironmentAndStockWhileCredentialsCanRotate() {
+        advanceBudgetTime = false;
+        KiwoomAccessTokenScope real = scope("real");
+        cacheToken(real, "real-token");
+        cache.savePrice(real.getBaseUrl(), "005930", 900);
+        quote("005930", "100", "0");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        assertEquals(Integer.valueOf(100), provider(new KiwoomAccessTokenScope("virtual", "synthetic-key", "rotated-secret"))
+                .getCurrentPrice("005930"));
+        KiwoomTokenService realTokens = new KiwoomTokenService(real, 600, rest, repository, locks.client(), clock);
+        for (int i = 0; i < 5; i++) limiter.acquireCurrentPrice(realTokens);
+        assertEquals(Integer.valueOf(900), provider(real).getCurrentPrice("005930"));
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("000660"));
+        server.verify();
+    }
+
+    @Test
+    public void freshCacheDoesNotHideHttpBusinessTokenOrConversionErrors() {
+        cache.savePrice(scope.getBaseUrl(), "005930", 900);
+        cache.saveQuote(scope.getBaseUrl(), new CurrentQuote("005930", "900", "1"));
+        expect(scope, "005930", "synthetic-token").andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        expect(scope, "005930", "synthetic-token").andRespond(withSuccess(
+                "{\"cur_prc\":\"100\",\"return_code\":10}", MediaType.APPLICATION_JSON));
+        quote("005930", "bad", "0");
+        assertSanitizedFailure();
+        assertSanitizedFailure();
+        assertTrue(provider.getCurrentPrices(List.of("005930")).isEmpty());
+        redis.failReads = true;
+        assertSanitizedFailure();
+        server.verify();
+    }
+
+    @Test
+    public void cacheWriteFailureDoesNotFailSuccessfulSingleOrListResponse() {
+        redis.failWrites = true;
+        quote("005930", "100", "0");
+        quote("000660", "200", "-1");
+        assertEquals(Integer.valueOf(100), provider.getCurrentPrice("005930"));
+        assertEquals(List.of(new CurrentQuote("000660", "200", "-1")),
+                provider.getCurrentPrices(List.of("000660")));
+        server.verify();
+    }
+
+    @Test
+    public void missingAndInvalidApiPricesDoNotCreateFallbackEntries() {
+        advanceBudgetTime = false;
+        quote("005930", null, "0");
+        quote("005930", "100", "bad");
+        assertNull(provider.getCurrentPrice("005930"));
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getCurrentPrice("005930"));
+        budgetNanos.set(1_000_000_000L);
+        assertTrue(provider.getCurrentPrices(List.of("005930")).isEmpty());
+        assertTrue(provider.getCurrentPrices(List.of("005930")).isEmpty());
+        assertEquals(1, redis.writes.get());
         server.verify();
     }
 
@@ -405,7 +509,7 @@ public class KiwoomCurrentPriceProviderTest {
 
     private CurrentPriceProvider provider(KiwoomAccessTokenScope tokenScope) {
         return new KiwoomCurrentPriceProvider(new KiwoomTokenService(tokenScope, 600, rest, repository,
-                locks.client(), clock), rest, limiter);
+                locks.client(), clock), rest, limiter, cache);
     }
 
     private void cacheToken(KiwoomAccessTokenScope tokenScope, String token) {

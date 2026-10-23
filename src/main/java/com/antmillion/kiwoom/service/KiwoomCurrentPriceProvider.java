@@ -2,6 +2,8 @@ package com.antmillion.kiwoom.service;
 
 import com.antmillion.kiwoom.dto.KiwoomCurrentPriceRequest;
 import com.antmillion.kiwoom.dto.KiwoomCurrentPriceResponse;
+import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
+import com.antmillion.kiwoom.repository.KiwoomCurrentPriceRedisRepository;
 import com.antmillion.marketdata.dto.CurrentQuote;
 import com.antmillion.marketdata.provider.CurrentPriceProvider;
 import org.springframework.http.HttpEntity;
@@ -21,17 +23,28 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
+    private final KiwoomCurrentPriceRedisRepository cache;
 
-    public KiwoomCurrentPriceProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter) {
+    public KiwoomCurrentPriceProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
+                                      KiwoomCurrentPriceRedisRepository cache) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
+        this.cache = Objects.requireNonNull(cache, "cache");
     }
 
     @Override
     public Integer getCurrentPrice(String stockCode) {
+        validateStockCode(stockCode);
+        try {
+            limiter.acquireCurrentPrice(tokens);
+        } catch (KiwoomRateLimitExceededException e) {
+            return cache.findPrice(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+        }
         String price = normalizePrice(fetch(stockCode).getCurrentPrice());
-        return price == null || price.isEmpty() ? null : Integer.valueOf(price);
+        Integer result = price == null || price.isEmpty() ? null : Integer.valueOf(price);
+        cache.savePrice(tokens.getBaseUrl(), stockCode, result);
+        return result;
     }
 
     @Override
@@ -41,9 +54,7 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
         // 단건 API를 입력 순서대로 호출하며 실패한 종목만 제외합니다. 중복 입력도 보존합니다.
         for (String stockCode : stockCodes) {
             try {
-                KiwoomCurrentPriceResponse response = fetch(stockCode);
-                quotes.add(new CurrentQuote(stockCode, normalizePrice(response.getCurrentPrice()),
-                        normalizeChangeRate(response.getChangeRate())));
+                quotes.add(getCurrentQuote(stockCode));
             } catch (RuntimeException e) {
                 // 원격 오류 본문·토큰·자격증명이 포함될 수 있어 예외 원문을 기록하지 않습니다.
             }
@@ -51,12 +62,27 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
         return quotes;
     }
 
-    private KiwoomCurrentPriceResponse fetch(String stockCode) {
+    private CurrentQuote getCurrentQuote(String stockCode) {
+        validateStockCode(stockCode);
+        try {
+            limiter.acquireCurrentPrice(tokens);
+        } catch (KiwoomRateLimitExceededException e) {
+            return cache.findQuote(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+        }
+        KiwoomCurrentPriceResponse response = fetch(stockCode);
+        CurrentQuote result = new CurrentQuote(stockCode, normalizePrice(response.getCurrentPrice()),
+                normalizeChangeRate(response.getChangeRate()));
+        cache.saveQuote(tokens.getBaseUrl(), result);
+        return result;
+    }
+
+    private void validateStockCode(String stockCode) {
         if (stockCode == null || !stockCode.matches("[0-9A-Z]{6}")) {
             throw new IllegalArgumentException("Kiwoom 현재가는 KRX 6자리 종목코드만 지원합니다.");
         }
-        // 목록도 종목마다 소비합니다. 소진 시 Redis/토큰 발급/시세 HTTP에 진입하지 않습니다.
-        limiter.acquireCurrentPrice(tokens);
+    }
+
+    private KiwoomCurrentPriceResponse fetch(String stockCode) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
         try {
