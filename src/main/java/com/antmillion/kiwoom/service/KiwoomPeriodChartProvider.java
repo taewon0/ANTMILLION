@@ -20,14 +20,12 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /** 내부 명시 호출 전용이며 Spring bean·운영 Provider로 등록하지 않습니다. */
 public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
-    private static final int MAX_PAGES = 100;
+    private static final int MAX_CANDLES = 100;
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
@@ -44,58 +42,39 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
         String apiId = apiId(request.getPeriod());
         KiwoomPeriodChartRequest body = new KiwoomPeriodChartRequest(request.getStockCode(),
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
+        // KIS 기간별 시세와 같이 시세 HTTP는 한 번만 호출하고 최대 100건을 반환합니다.
+        // 연속 조회 가능 헤더가 있어도 추가 호출로 기간을 채우지 않습니다.
+        limiter.acquirePeriodChart(tokens, apiId);
+        KiwoomPeriodChartResponse data = fetch(apiId, body).getBody();
+        if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
+                || (data.getStockCode() != null && !data.getStockCode().isBlank()
+                && !request.getStockCode().equals(data.getStockCode()))) {
+            throw invalidResponse();
+        }
+        List<Price> prices = prices(data, request.getPeriod());
+        if (prices == null) throw invalidResponse();
         List<PeriodCandle> result = new ArrayList<>();
-        Set<String> seenKeys = new HashSet<>();
-        String nextKey = null;
         LocalDate previousDate = null;
-        for (int page = 0; page < MAX_PAGES; page++) {
-            // 각 페이지도 현재가와 동일한 실전 예산/모의 TR별 예산을 소비합니다.
-            // 한도 소진·후속 페이지 오류 시 누적 결과를 반환하지 않습니다.
-            limiter.acquirePeriodChart(tokens, apiId);
-            ResponseEntity<KiwoomPeriodChartResponse> response = fetch(apiId, body, nextKey);
-            KiwoomPeriodChartResponse data = response.getBody();
-            if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
-                    || (data.getStockCode() != null && !data.getStockCode().isBlank()
-                    && !request.getStockCode().equals(data.getStockCode()))) {
+        for (Price price : prices) {
+            if (result.size() == MAX_CANDLES) break;
+            if (price == null) {
+                result.add(null);
+                continue;
+            }
+            LocalDate date = date(price.getDate());
+            if (date.isAfter(request.getEndDate()) || (previousDate != null && date.isAfter(previousDate))) {
                 throw invalidResponse();
             }
-            List<Price> prices = prices(data, request.getPeriod());
-            if (prices == null) throw invalidResponse();
-            boolean reachedStart = false;
-            LocalDate pageOldest = null;
-            for (Price price : prices) {
-                if (price == null) {
-                    result.add(null);
-                    continue;
-                }
-                LocalDate date = date(price.getDate());
-                // 기준일 이전의 최신순 응답만 허용하여 조기 종료로 인한 누락을 막습니다.
-                if (date.isAfter(request.getEndDate()) || (previousDate != null && date.isAfter(previousDate))) {
-                    throw invalidResponse();
-                }
-                previousDate = date;
-                pageOldest = date;
-                if (!date.isBefore(request.getStartDate())) {
-                    result.add(new PeriodCandle(price.getDate(), price(price.getClosePrice()),
-                            price(price.getOpenPrice()), price(price.getHighPrice()), price(price.getLowPrice())));
-                }
-                if (!date.isAfter(request.getStartDate())) reachedStart = true;
+            previousDate = date;
+            if (!date.isBefore(request.getStartDate())) {
+                result.add(new PeriodCandle(price.getDate(), price(price.getClosePrice()),
+                        price(price.getOpenPrice()), price(price.getHighPrice()), price(price.getLowPrice())));
             }
-            String continuation = response.getHeaders().getFirst("cont-yn");
-            if (continuation != null && !continuation.isEmpty() && !"N".equals(continuation)
-                    && !"Y".equals(continuation)) throw invalidResponse();
-            if (reachedStart || !"Y".equals(continuation)) return result;
-            // 빈 페이지·반복 키·상한 초과를 정상적인 부분 결과로 처리하지 않습니다.
-            String returnedKey = response.getHeaders().getFirst("next-key");
-            if (pageOldest == null || returnedKey == null || returnedKey.isBlank()
-                    || returnedKey.length() > 50 || !seenKeys.add(returnedKey)) throw invalidResponse();
-            nextKey = returnedKey;
         }
-        throw new IllegalStateException("Kiwoom 기간별 차트 연속 조회 상한을 초과했습니다.");
+        return result;
     }
 
-    private ResponseEntity<KiwoomPeriodChartResponse> fetch(String apiId, KiwoomPeriodChartRequest body,
-                                                          String nextKey) {
+    private ResponseEntity<KiwoomPeriodChartResponse> fetch(String apiId, KiwoomPeriodChartRequest body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
         try {
@@ -104,10 +83,6 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
             throw new IllegalStateException("Kiwoom 기간별 차트 토큰 조회에 실패했습니다.");
         }
         headers.set("api-id", apiId);
-        if (nextKey != null) {
-            headers.set("cont-yn", "Y");
-            headers.set("next-key", nextKey);
-        }
         try {
             return rest.exchange(tokens.getBaseUrl() + "/api/dostk/chart", HttpMethod.POST,
                     new HttpEntity<>(body, headers), KiwoomPeriodChartResponse.class);

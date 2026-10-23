@@ -3,7 +3,7 @@ package com.antmillion.kiwoom.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 
-/** KRX 수정주가 차트의 기준일을 연속 조회 내내 고정합니다. */
+/** KRX 수정주가 차트의 기준일로 공통 요청의 종료일을 사용합니다. */
 @Getter
 public final class KiwoomPeriodChartRequest {
     @JsonProperty("stk_cd")

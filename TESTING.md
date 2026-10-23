@@ -414,17 +414,18 @@ Spring bean/운영 Provider로 등록하지 않으며 기존 전역 REST/WS 선�
 공식 [차트 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)의
 `ka10081/ka10082/ka10083/ka10094`, `/api/dostk/chart`, `upd_stkpc_tp=1`을 사용합니다.
 
-- 요청 종료일을 `base_dt`로 고정하고 `cont-yn`/`next-key`로 연속 조회합니다. 응답 `dt`가 시작·종료일 양끝을 포함하는 행만 반환하며, 봉을 일봉으로 재집계하거나 날짜를 바꾸지 않습니다.
+- 기존 KIS와 같이 시세 API를 한 번만 호출합니다. 종료일을 `base_dt`로 전달하고, 응답 `dt`가 시작·종료일 양끝을 포함하는 최신 최대 100건을 반환합니다. `cont-yn`/`next-key`는 사용하지 않으며 연속 조회로 기간을 채우지 않습니다. 100건보다 적은 첫 응답도 정상 결과입니다.
 - 응답의 최신순·중복·null 행·빈/누락 가격을 보존합니다. 가격은 방향 부호를 제거한 정확한 원 단위 정수 문자열로 변환하며, 소수 원·잘못된 가격/날짜·다른 종목·역순 날짜·누락 목록은 실패합니다.
-- 시작일 도달 또는 연속 조회 종료 시 반환합니다. 빈 연속 페이지·누락/반복 키·100페이지 상한은 실패하며 정상 부분 결과로 처리하지 않습니다.
-- 모든 페이지가 토큰 조회/HTTP 전에 호출 예산을 소비합니다. 실전은 현재가와 환경·앱 키별 예산을 공유하고, 모의는 TR별 1회/초를 적용합니다. 기존 현재가 예산 키와 토큰/캐시 키는 유지합니다.
-- 사용자가 선택한 정책에 따라 한도 소진은 즉시 실패하며 누적 데이터를 반환하지 않습니다. 대기·retry·캐시·HTTP 매핑·401 복구·자동 전환은 추가하지 않습니다.
+- 공통 Controller의 일봉 100일·주봉 52주·월봉 48개월·년봉 30년 조회 기간을 유지합니다. 봉을 재집계하거나 날짜를 바꾸지 않습니다. [KIS 공식 예제](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/inquire_daily_itemchartprice/inquire_daily_itemchartprice.py)의 단일 호출 최대 100건을 반환 기준으로 사용합니다.
+- 단일 시세 조회가 토큰 조회/HTTP 전에 호출 예산을 한 번 소비합니다. 실전은 현재가와 환경·앱 키별 예산을 공유하고, 모의는 TR별 1회/초를 적용합니다. 기존 현재가 예산 키와 토큰/캐시 키는 유지합니다.
+- 한도 소진은 기존 Kiwoom 정책대로 즉시 실패합니다. 대기·retry·캐시·HTTP 매핑·401 복구·자동 전환은 추가하지 않습니다.
 
 ```powershell
 mvn -B '-Dproject.build.sourceEncoding=UTF-8' '-Dtest=KiwoomPeriodChartProviderTest,KiwoomCurrentPriceProviderTest,KiwoomCurrentPriceCacheTest,KiwoomRestRateLimitTest,KiwoomTokenServiceTest,KiwoomAuthConfigTest,KisPeriodChartProviderTest,KisPeriodChartControllerTest,KisCurrentPriceProviderTest,MarketDataProviderRegistryTest,MarketDataRoutingTest,RealtimeRoutingTest' test
 mvn -B '-DskipTests' '-Dproject.build.sourceEncoding=UTF-8' clean package
 ```
 
+실제 KIS 서비스/adapter와 Kiwoom adapter를 HTTP·메모리 Redis 대역으로 함께 실행하여 동일 Controller 요청의 기간·봉 날짜/OHLC·최신순·문자열/null과 기존 MVC JSON을 비교합니다. 연속 헤더가 있어도 추가 HTTP 없이 정상 반환하고 99/100/101건 경계를 적용하는지 검증합니다. 합성 데이터 기반 계약 비교이며 실제 증권사 간 수치·권리 조정 일치를 입증하지 않습니다.
 테스트는 합성 자격증명·고정 시각·메모리 Redis/잠금·MockRestServiceServer·실제 파일을 가린 최소 Spring context를 사용합니다.
 개발 DB 설정·DB·실제 Redis/증권사·전체 앱/스케줄러를 로드하지 않습니다. 실제 연동·JDK 11·서버/브라우저·분산 실행은 별도 검증 범위입니다.
 

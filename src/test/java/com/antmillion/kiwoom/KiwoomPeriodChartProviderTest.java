@@ -1,5 +1,17 @@
 package com.antmillion.kiwoom;
 
+import com.antmillion.kis.config.KisConfig;
+import com.antmillion.kis.config.KisRestRateLimitConfig;
+import com.antmillion.kis.controller.KisController;
+import com.antmillion.kis.dto.KisAccessTokenScope;
+import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
+import com.antmillion.kis.repository.KisChartRedisRepository;
+import com.antmillion.kis.service.KisApiService;
+import com.antmillion.kis.service.KisPeriodChartProvider;
+import com.antmillion.kis.service.RateLimitedKisApiClient;
+import org.springframework.http.HttpHeaders;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import com.antmillion.kiwoom.dto.KiwoomAccessTokenScope;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
 import com.antmillion.kiwoom.repository.KiwoomAccessTokenRedisRepository;
@@ -88,24 +100,159 @@ public class KiwoomPeriodChartProviderTest {
     }
 
     @Test
-    public void continuationKeepsBaseDateAndUsesReturnedHeadersWithoutChangingOrderOrDuplicates() {
+    public void continuationDoesNotCauseAnotherHttpOrTurnSuccessfulFirstResponseIntoLimitFailure() {
+        advanceTime = false;
         expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261023", "100"), row("20261022", "200")), MediaType.APPLICATION_JSON)
-                .headers(continuation("synthetic-next-key")));
-        expect(scope, "ka10081", "synthetic-next-key", "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261022", "200"), row("20261021", "300"), row("20260930", "400")),
-                MediaType.APPLICATION_JSON).headers(continuation("unused-key")));
-        assertEquals(List.of(candle("20261023", "100"), candle("20261022", "200"),
-                candle("20261022", "200"), candle("20261021", "300")), provider.getPeriodChart(request("D")));
+                body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON)
+                .headers(continuation("unused-key")));
+        assertEquals(List.of(candle("20261023", "100")), provider.getPeriodChart(request("D")));
+        assertEquals(1, redis.reads.size());
+        assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getPeriodChart(request("D")));
+        assertEquals(1, redis.reads.size());
         server.verify();
     }
 
     @Test
-    public void inclusiveStartAndEndStopWithoutFollowingUnneededContinuation() {
+    public void irrelevantContinuationHeadersDoNotInvalidateEmptyOrShortResults() {
+        for (String key : Arrays.asList(null, "", "x".repeat(51))) {
+            server.reset();
+            expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
+                    body(FIELDS[0]), MediaType.APPLICATION_JSON).headers(continuation(key)));
+            assertTrue(provider.getPeriodChart(request("D")).isEmpty());
+            server.verify();
+        }
+    }
+
+    @Test
+    public void allPeriodsReturnAtMostLatestHundredCandlesFromOneResponse() {
+        LocalDate end = LocalDate.of(2026, 10, 23);
+        for (int period = 0; period < PERIODS.length; period++) {
+            for (int size : List.of(99, 100, 101)) {
+                server.reset();
+                String[] rows = new String[size];
+                List<PeriodCandle> expected = new java.util.ArrayList<>();
+                for (int i = 0; i < size; i++) {
+                    String day = end.minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
+                    rows[i] = row(day, Integer.toString(1000 - i));
+                    if (i < 100) expected.add(candle(day, Integer.toString(1000 - i)));
+                }
+                expect(scope, API_IDS[period], null, "20261023", "synthetic-token").andRespond(withSuccess(
+                        body(FIELDS[period], rows), MediaType.APPLICATION_JSON).headers(continuation("unused-key")));
+                assertEquals(expected, provider.getPeriodChart(new PeriodChartRequest("005930", PERIODS[period],
+                        end.minusYears(2), end)));
+                server.verify();
+            }
+        }
+    }
+
+    @Test
+    public void sameControllerRequestProducesSameCandlesAsActualKisHttpAdapterForAllPeriods() throws Exception {
+        KisConfig kisConfig = new KisConfig() {
+            @Override public String getBaseUrl() { return "https://openapi.koreainvestment.com:9443"; }
+        };
+        kisConfig.appKey = "synthetic-key";
+        kisConfig.appSecret = "synthetic-secret";
+        kisConfig.accountNo = "synthetic-account";
+        kisConfig.acntPrdtCd = "01";
+        RestTemplate kisRest = new RestTemplate();
+        MockRestServiceServer kisServer = MockRestServiceServer.bindTo(kisRest).build();
+        KisAccessTokenRedisRepository kisTokens =
+                new KisAccessTokenRedisRepository(redis);
+        kisTokens.save(new KisAccessTokenScope(kisConfig.getBaseUrl(),
+                kisConfig.appKey, kisConfig.appSecret), "synthetic-kis-token", 86400);
+        PeriodChartProvider kis = new KisPeriodChartProvider(
+                new KisApiService(kisConfig, null, kisRest, kisTokens,
+                        new KisChartRedisRepository(redis, new ObjectMapper()),
+                        null, null, null, null, new RateLimitedKisApiClient(redis,
+                        kisConfig, new KisRestRateLimitConfig(18, 1))));
+        for (int i = 0; i < PERIODS.length; i++) {
+            server.reset();
+            kisServer.reset();
+            PeriodChartRequest[] captured = new PeriodChartRequest[1];
+            new KisController(null, null, value -> {
+                captured[0] = value;
+                return List.of();
+            }, null, null, null).periodChart("005930", PERIODS[i]);
+            PeriodChartRequest query = captured[0];
+            LocalDate end = query.getEndDate();
+            LocalDate expectedStart;
+            LocalDate latest;
+            LocalDate previous;
+            switch (query.getPeriod()) {
+                case "W":
+                    expectedStart = end.minusWeeks(52);
+                    latest = end.minusDays(end.getDayOfWeek().getValue() - 1);
+                    previous = latest.minusWeeks(1);
+                    break;
+                case "M":
+                    expectedStart = end.minusMonths(48);
+                    latest = end.withDayOfMonth(1);
+                    previous = latest.minusMonths(1);
+                    break;
+                case "Y":
+                    expectedStart = end.minusYears(30);
+                    latest = end.withDayOfYear(1);
+                    previous = latest.minusYears(1);
+                    break;
+                default:
+                    expectedStart = end.minusDays(100);
+                    latest = end;
+                    previous = latest.minusDays(1);
+            }
+            assertEquals(expectedStart, query.getStartDate());
+            String first = latest.format(DateTimeFormatter.BASIC_ISO_DATE);
+            String second = previous.format(DateTimeFormatter.BASIC_ISO_DATE);
+            List<PeriodCandle> expected = Arrays.asList(candle(first, "71000"),
+                    new PeriodCandle(second, "", null, "0", null), null);
+            String kisJson = "{\"output2\":[{\"stck_bsop_date\":\"" + first + "\",\"stck_clpr\":\"71000\","
+                    + "\"stck_oprc\":\"100\",\"stck_hgpr\":\"200\",\"stck_lwpr\":\"50\"},"
+                    + "{\"stck_bsop_date\":\"" + second + "\",\"stck_clpr\":\"\",\"stck_hgpr\":\"0\"},null]}";
+            String kisUrl = kisConfig.getBaseUrl() + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+                    + "?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930&FID_INPUT_DATE_1="
+                    + query.getStartDate().format(DateTimeFormatter.BASIC_ISO_DATE) + "&FID_INPUT_DATE_2="
+                    + end.format(DateTimeFormatter.BASIC_ISO_DATE) + "&FID_PERIOD_DIV_CODE=" + query.getPeriod()
+                    + "&FID_ORG_ADJ_PRC=0";
+            kisServer.expect(requestTo(kisUrl)).andExpect(method(HttpMethod.GET))
+                    .andExpect(header("tr_id", "FHKST03010100"))
+                    .andRespond(withSuccess(kisJson, MediaType.APPLICATION_JSON));
+            expect(scope, API_IDS[i], null, end.format(DateTimeFormatter.BASIC_ISO_DATE), "synthetic-token")
+                    .andRespond(withSuccess(body(FIELDS[i], row(first, "-071000.00"),
+                            "{\"dt\":\"" + second + "\",\"cur_prc\":\"\",\"high_pric\":\"0\"}", "null",
+                            row(expectedStart.minusDays(1).format(DateTimeFormatter.BASIC_ISO_DATE), "1")),
+                            MediaType.APPLICATION_JSON).headers(continuation("unused-key")));
+            List<PeriodCandle> kisResult = kis.getPeriodChart(query);
+            List<PeriodCandle> kiwoomResult = provider.getPeriodChart(query);
+            assertEquals(expected, kisResult);
+            assertEquals(kisResult, kiwoomResult);
+            // 두 adapter의 결과를 기존 Controller에서 직렬화해 URL/필드/문자열/null 계약도 비교합니다.
+            ObjectMapper mapper = new ObjectMapper();
+            KisController kisController = new KisController(
+                    null, null, value -> kisResult, null, null, null);
+            KisController kiwoomController = new KisController(
+                    null, null, value -> kiwoomResult, null, null, null);
+            MockMvc kisMvc = MockMvcBuilders
+                    .standaloneSetup(kisController).build();
+            MockMvc kiwoomMvc = MockMvcBuilders
+                    .standaloneSetup(kiwoomController).build();
+            byte[] kisBody = kisMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .get("/api/kis/periodChart/005930").param("period", query.getPeriod()))
+                    .andReturn().getResponse().getContentAsByteArray();
+            byte[] kiwoomBody = kiwoomMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .get("/api/kis/periodChart/005930").param("period", query.getPeriod()))
+                    .andReturn().getResponse().getContentAsByteArray();
+            assertEquals(mapper.readTree(kisBody), mapper.readTree(kiwoomBody));
+            assertEquals(5, mapper.readTree(kiwoomBody).get(0).size());
+            kisServer.verify();
+            server.verify();
+        }
+    }
+
+    @Test
+    public void inclusiveStartAndEndFilterSingleResponseWithoutChangingDuplicates() {
         expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261023", "100"), row("20261001", "200"), row("20260930", "300")),
+                body(FIELDS[0], row("20261023", "100"), row("20261023", "100"), row("20261001", "200"), row("20260930", "300")),
                 MediaType.APPLICATION_JSON).headers(continuation(null)));
-        assertEquals(List.of(candle("20261023", "100"), candle("20261001", "200")),
+        assertEquals(List.of(candle("20261023", "100"), candle("20261023", "100"), candle("20261001", "200")),
                 provider.getPeriodChart(request("D")));
         server.verify();
     }
@@ -250,20 +397,6 @@ public class KiwoomPeriodChartProviderTest {
     }
 
     @Test
-    public void continuationLimitFailureDoesNotReturnFirstPageOrReadTokenAgain() {
-        advanceTime = false;
-        expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON)
-                .headers(continuation("synthetic-next-key")));
-        KiwoomRateLimitExceededException error = assertThrows(KiwoomRateLimitExceededException.class,
-                () -> provider.getPeriodChart(request("D")));
-        assertEquals(1, error.getRetryAfterSeconds());
-        assertEquals(1, redis.reads.size());
-        assertTrue(locks.keys.isEmpty());
-        server.verify();
-    }
-
-    @Test
     public void realPriceAndAllChartPeriodsShareBudgetAndRefill() {
         advanceTime = false;
         KiwoomAccessTokenScope real = scope("real", "synthetic-key", "synthetic-secret");
@@ -333,16 +466,6 @@ public class KiwoomPeriodChartProviderTest {
     }
 
     @Test
-    public void continuationHttpFailureDoesNotReturnPartialCandles() {
-        expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON)
-                .headers(continuation("key-a")));
-        expect(scope, "ka10081", "key-a", "20261023", "synthetic-token").andRespond(withServerError());
-        assertSanitizedFailure();
-        server.verify();
-    }
-
-    @Test
     public void failedHttpConsumesBudgetAndDoesNotRetryOrReadTokenOnRejection() {
         advanceTime = false;
         expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withServerError());
@@ -350,16 +473,6 @@ public class KiwoomPeriodChartProviderTest {
         int reads = redis.reads.size();
         assertThrows(KiwoomRateLimitExceededException.class, () -> provider.getPeriodChart(request("D")));
         assertEquals(reads, redis.reads.size());
-        server.verify();
-    }
-
-    @Test
-    public void invalidContinuationFlagIsNotTreatedAsSuccessfulEnd() {
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-        headers.set("cont-yn", "unexpected");
-        expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON).headers(headers));
-        assertSanitizedFailure();
         server.verify();
     }
 
@@ -374,55 +487,6 @@ public class KiwoomPeriodChartProviderTest {
         assertThrows(KiwoomRateLimitExceededException.class, () -> limiter.acquirePeriodChart(tokens, "ka10081"));
         assertThrows(KiwoomRateLimitExceededException.class, () -> limiter.acquirePeriodChart(otherApp, "ka10081"));
         assertTrue(redis.reads.isEmpty());
-        server.verify();
-    }
-
-    @Test
-    public void missingBlankOversizedKeysAndEmptyContinuationsFail() {
-        for (String key : List.of("", " ", "x".repeat(51))) {
-            server.reset();
-            expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                    body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON)
-                    .headers(continuation(key)));
-            assertSanitizedFailure();
-            server.verify();
-        }
-        for (String rows : List.of("", "null")) {
-            server.reset();
-            expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                    body(FIELDS[0], rows), MediaType.APPLICATION_JSON).headers(continuation(null)));
-            assertSanitizedFailure();
-            server.verify();
-        }
-    }
-
-    @Test
-    public void repeatedContinuationKeyAndAscendingPageFail() {
-        for (String secondDate : List.of("20261022", "20261024")) {
-            server.reset();
-            expect(scope, "ka10081", null, "20261023", "synthetic-token").andRespond(withSuccess(
-                    body(FIELDS[0], row("20261023", "100")), MediaType.APPLICATION_JSON)
-                    .headers(continuation("key-a")));
-            expect(scope, "ka10081", "key-a", "20261023", "synthetic-token").andRespond(withSuccess(
-                    body(FIELDS[0], row(secondDate, "200")), MediaType.APPLICATION_JSON)
-                    .headers(continuation("key-a")));
-            assertSanitizedFailure();
-            server.verify();
-        }
-    }
-
-    @Test
-    public void continuationHasHardPageBoundInsteadOfSilentlyTruncating() {
-        for (int i = 0; i < 100; i++) {
-            String day = LocalDate.of(2026, 10, 23).minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
-            expect(scope, "ka10081", i == 0 ? null : "key-" + i, "20261023", "synthetic-token")
-                    .andRespond(withSuccess(body(FIELDS[0], row(day, "100")), MediaType.APPLICATION_JSON)
-                    .headers(continuation("key-" + (i + 1))));
-        }
-        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> provider.getPeriodChart(
-                new PeriodChartRequest("005930", "D", LocalDate.of(2025, 1, 1), LocalDate.of(2026, 10, 23))));
-        assertTrue(failure.getMessage().contains("상한"));
-        assertEquals(100, redis.reads.size());
         server.verify();
     }
 
@@ -517,8 +581,8 @@ public class KiwoomPeriodChartProviderTest {
         return "{\"stk_cd\":\"005930\",\"return_code\":0,\"" + field + "\":[" + String.join(",", rows) + "]}";
     }
 
-    private static org.springframework.http.HttpHeaders continuation(String key) {
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+    private static HttpHeaders continuation(String key) {
+        HttpHeaders headers = new HttpHeaders();
         headers.set("cont-yn", "Y");
         if (key != null) headers.set("next-key", key);
         return headers;
