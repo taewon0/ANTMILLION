@@ -67,7 +67,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         List<Price> prices = fetch(request.getStockCode(), request.getDate());
         if (prices == null) return Collections.emptyList();
         List<MinuteCandle> result = new ArrayList<>();
-        for (Price price : select(prices, request.getDate().atTime(15, 30), 120)) {
+        for (Price price : select(prices, request.getDate().atTime(15, 30), 120, false)) {
             if (price == null) {
                 result.add(null);
             } else {
@@ -87,7 +87,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         List<Price> prices = fetch(stockCode, now.toLocalDate());
         if (prices == null) return null;
         List<RecentMinuteCandle> result = new ArrayList<>();
-        for (Price price : select(prices, now, 30)) {
+        for (Price price : select(prices, now, 30, true)) {
             result.add(price == null ? null : new RecentMinuteCandle(price.getTimestamp().substring(8),
                     numericPrice(price.getClosePrice()), numericPrice(price.getOpenPrice()),
                     numericPrice(price.getHighPrice()), numericPrice(price.getLowPrice())));
@@ -132,7 +132,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         }
     }
 
-    private static List<Price> select(List<Price> prices, LocalDateTime end, int limit) {
+    private static List<Price> select(List<Price> prices, LocalDateTime end, int limit, boolean sameDateOnly) {
         List<Price> result = new ArrayList<>();
         LocalDateTime previous = null;
         for (Price price : prices) {
@@ -144,8 +144,10 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
             LocalDateTime time = timestamp(price.getTimestamp());
             if (previous != null && time.isAfter(previous)) throw invalidResponse();
             previous = time;
-            // 이전 거래일·기준 시각 이후 봉은 응답에 섞여도 반환하지 않습니다.
-            if (time.toLocalDate().equals(end.toLocalDate()) && !time.isAfter(end)) result.add(price);
+            // 일별은 실제 반환 날짜를 보존하며 각 날짜의 기준 시각·요청일 상한을 적용합니다.
+            if (time.isAfter(end) || time.toLocalTime().isAfter(end.toLocalTime())) continue;
+            // 날짜 필드가 없는 최근 분봉은 기존 당일 조건을 유지합니다.
+            if (!sameDateOnly || time.toLocalDate().equals(end.toLocalDate())) result.add(price);
         }
         return result;
     }

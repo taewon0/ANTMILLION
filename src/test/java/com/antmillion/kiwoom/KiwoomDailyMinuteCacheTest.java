@@ -135,13 +135,14 @@ public class KiwoomDailyMinuteCacheTest {
     public void providerMarketAdjustmentAndLegacyKeysAreNeverReusedOrChanged() {
         cache.save(VIRTUAL, request(), candles());
         String key = onlyKey();
-        assertTrue(key.startsWith("kiwoom:chart:daily-minute:v1:"));
+        assertTrue(key.startsWith("kiwoom:chart:daily-minute:v2:"));
         assertTrue(key.contains(":3:KRX:"));
         assertTrue(key.endsWith(":1:1:1:1:6:153000"));
         assertFalse(key.contains("synthetic"));
         Object saved = redis.values.remove(key);
         Map<String, Object> unrelated = new HashMap<>();
         unrelated.put(key.replace("kiwoom:", "kis:"), saved);
+        unrelated.put(key.replace(":v2:", ":v1:"), envelope("[]"));
         unrelated.put(key.replace(":3:KRX:", ":3:NXT:"), saved);
         unrelated.put(key.replace(":1:1:1:1:6:", ":1:1:1:0:6:"), saved);
         unrelated.put(key.replace(":1:1:1:1:6:", ":1:5:1:1:6:"), saved);
@@ -208,7 +209,7 @@ public class KiwoomDailyMinuteCacheTest {
             redis.values.put(key, envelope("[" + row + "]"));
             assertFalse(cache.find(VIRTUAL, request()).isPresent());
         }
-        for (String date : List.of("20260230", "20261022", "20261024", "2026-10-23", "")) {
+        for (String date : List.of("20260230", "00001022", "20261024", "2026-10-23", "")) {
             ObjectNode row = (ObjectNode) mapper.readTree(valid);
             row.put("date", date);
             redis.values.put(key, envelope("[" + row + "]"));
@@ -442,12 +443,50 @@ public class KiwoomDailyMinuteCacheTest {
         String response = current.replace(row, row.replace("153000", "153100") + "," + row + ","
                 + row.replace("153000", "152900") + "," + row.replace("20261023", "20261022"));
         expectChart("005930", response);
-        List<MinuteCandle> expected = List.of(new MinuteCandle("20261023", "152900", "100", "100", "100", "100"),
+        List<MinuteCandle> expected = List.of(new MinuteCandle("20261022", "153000", "100", "100", "100", "100"),
+                new MinuteCandle("20261023", "152900", "100", "100", "100", "100"),
                 candle("100"));
         assertEquals(expected, provider.getDailyMinutes(request()));
         assertEquals(expected, provider.getDailyMinutes(request()));
         assertEquals(1, redis.writes.get());
         server.verify();
+    }
+
+    @Test
+    public void holidayColdAndWarmReadsPreservePreviousDatesAndIgnoreOldEmptyCache() {
+        MinuteChartRequest holiday = new MinuteChartRequest("005930", end().plusDays(1));
+        cache.save(VIRTUAL, holiday, List.of());
+        String key = onlyKey();
+        String legacyKey = key.replace(":v2:", ":v1:");
+        Object legacyEmpty = redis.values.remove(key);
+        redis.values.put(legacyKey, legacyEmpty);
+        String response = body("005930", "-00100");
+        String row = response.substring(response.indexOf("[{") + 1, response.lastIndexOf(']'));
+        response = response.replace(row, row + ",null," + row.replace("20261023", "20261022"));
+        expectChart("005930", "20261024", response);
+        List<MinuteCandle> expected = Arrays.asList(
+                new MinuteCandle("20261022", "153000", "100", "100", "100", "100"), null, candle("100"));
+        assertEquals(expected, provider.getDailyMinutes(holiday));
+        tokenRedis.failReads = true;
+        assertEquals(expected, provider.getDailyMinutes(holiday));
+        assertEquals(1, tokenRedis.reads.size());
+        assertEquals(legacyEmpty, redis.values.get(legacyKey));
+        assertEquals(Long.valueOf(60_000), redis.ttls.get(key));
+        assertEquals(2, redis.writes.get());
+        server.verify();
+    }
+
+    @Test
+    public void cacheOrderUsesFullDatesAcrossDifferentTradingDays() {
+        MinuteCandle earlier = new MinuteCandle("20261022", "153000", "100", "100", "100", "100");
+        MinuteCandle later = new MinuteCandle("20261023", "090000", "101", "100", "100", "100");
+        List<MinuteCandle> valid = Arrays.asList(earlier, null, later);
+        cache.save(VIRTUAL, request(), valid);
+        assertEquals(valid, cache.find(VIRTUAL, request()).orElseThrow());
+        cache.save(VIRTUAL, request(), List.of(later, earlier));
+        assertFalse(cache.find(VIRTUAL, request()).isPresent());
+        cache.save(VIRTUAL, request(), List.of(new MinuteCandle("20261022", "153001", "100", "100", "100", "100")));
+        assertFalse(cache.find(VIRTUAL, request()).isPresent());
     }
 
     @Test
@@ -469,6 +508,10 @@ public class KiwoomDailyMinuteCacheTest {
     }
 
     private void expectChart(String stockCode, String response) {
+        expectChart(stockCode, "20261023", response);
+    }
+
+    private void expectChart(String stockCode, String baseDate, String response) {
         server.expect(requestTo(VIRTUAL + "/api/dostk/chart")).andExpect(method(HttpMethod.POST))
                 .andExpect(header("api-id", "ka10080"))
                 .andExpect(header("Authorization", "Bearer synthetic-token"))
@@ -476,7 +519,7 @@ public class KiwoomDailyMinuteCacheTest {
                     com.fasterxml.jackson.databind.JsonNode body = new ObjectMapper().readTree(
                             ((MockClientHttpRequest) request).getBodyAsString());
                     assertEquals(stockCode, body.path("stk_cd").asText());
-                    assertEquals("20261023", body.path("base_dt").asText());
+                    assertEquals(baseDate, body.path("base_dt").asText());
                     assertEquals("1", body.path("upd_stkpc_tp").asText());
                     assertEquals("1", body.path("tic_scope").asText());
                     assertEquals(4, body.size());

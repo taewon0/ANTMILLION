@@ -28,6 +28,10 @@ async function chartScreen(page, rows) {
     const price = { innerText: '' };
     const container = { clientWidth: 800, clientHeight: 280, innerHTML: '' };
     const context = vm.createContext({
+        Date: class extends Date {
+            constructor(...args) { super(...(args.length ? args : ['2026-10-24T13:21:00Z'])); }
+            static now() { return new Date('2026-10-24T13:21:00Z').getTime(); }
+        },
         stockChart: null,
         candleSeries: null,
         currentCandleData: null,
@@ -78,6 +82,26 @@ for (const page of ['main', 'detail']) {
         assert.equal(screen.fitCount, 1);
         if (page === 'main') assert.deepEqual(screen.subscribed, ['005930']);
         else assert.equal(screen.context.currentChartPeriod, 'minute');
+    });
+
+    test(page + ': 휴장일 조회에서도 여러 거래일의 실제 날짜·OHLC 유지', async () => {
+        const screen = await chartScreen(page, [
+            { stck_bsop_date: '20261022', stck_cntg_hour: '153000', stck_prpr: '70000',
+                stck_oprc: '69000', stck_hgpr: '71000', stck_lwpr: '68000' },
+            { stck_bsop_date: '20261023', stck_cntg_hour: '090000', stck_prpr: '71000',
+                stck_oprc: '70000', stck_hgpr: '72000', stck_lwpr: '69000' }
+        ]);
+        const expectedTime = (day, hour, minute) => {
+            const date = new Date(2026, 9, day, hour, minute, 0);
+            return Math.floor(date.getTime() / 1000) - (page === 'detail' ? date.getTimezoneOffset() * 60 : 0);
+        };
+        assert.deepEqual(screen.plotted, [[
+            { time: expectedTime(22, 15, 30), open: 69000, high: 71000, low: 68000, close: 70000 },
+            { time: expectedTime(23, 9, 0), open: 70000, high: 72000, low: 69000, close: 71000 }
+        ]]);
+        assert.equal(screen.context.currentCandleData.time, expectedTime(23, 9, 0));
+        assert.equal(screen.context.lastCandleUpdateTime, expectedTime(23, 9, 0));
+        assert.equal(screen.fitCount, 1);
     });
 
     test(page + ': 빈 결과는 캔들·실시간 구독을 추가하지 않음', async () => {

@@ -109,12 +109,39 @@ public class KiwoomMinuteChartProviderTest {
     }
 
     @Test
-    public void dailyFiltersOtherDatesAndTimesAfter1530BeforeTakingLatest120() {
+    public void dailyKeepsEarlierDatesButFiltersFutureDatesAndTimesAfter1530() {
         expect(scope, "20261023").andRespond(withSuccess(body(row("20261024100000", "1"),
                 row("20261023153100", "2"), row("20261023153000", "3"),
-                row("20261022153000", "4")), MediaType.APPLICATION_JSON));
-        assertEquals(List.of(candle("153000", "3")), provider.getDailyMinutes(request()));
+                row("20261022153100", "5"), row("20261022153000", "4")), MediaType.APPLICATION_JSON));
+        assertEquals(List.of(new MinuteCandle("20261022", "153000", "4", "100", "200", "50"),
+                candle("153000", "3")), provider.getDailyMinutes(request()));
         server.verify();
+    }
+
+    @Test
+    public void holidayDailyKeepsActualDatesWithoutRetryOrTradingDaySelection() {
+        for (LocalDate date : List.of(DATE.plusDays(1), DATE.plusDays(3), DATE.plusDays(7))) {
+            server.reset();
+            expect(scope, date.format(DateTimeFormatter.BASIC_ISO_DATE)).andRespond(withSuccess(body(
+                    row("20261023153000", "-071000.00"), row("20261022153000", "+70000")),
+                    MediaType.APPLICATION_JSON).headers(continuation()));
+            List<MinuteCandle> result = provider.getDailyMinutes(new MinuteChartRequest("005930", date));
+            assertEquals(List.of(new MinuteCandle("20261022", "153000", "70000", "100", "200", "50"),
+                    candle("153000", "71000")), result);
+            server.verify();
+        }
+    }
+
+    @Test
+    public void earlierDatesStillRequireValidDescendingTimestamps() {
+        for (String[] rows : List.of(new String[]{row("20261022150000", "1"), row("20261022150100", "2")},
+                new String[]{row("20261022150000", "1"), row("20261023140000", "2")},
+                new String[]{row("20260230150000", "1")}, new String[]{row("00001022150000", "1")})) {
+            server.reset();
+            expect(scope, "20261023").andRespond(withSuccess(body(rows), MediaType.APPLICATION_JSON));
+            assertSanitized(() -> provider.getDailyMinutes(request()));
+            server.verify();
+        }
     }
 
     @Test
@@ -122,6 +149,15 @@ public class KiwoomMinuteChartProviderTest {
         expect(scope, "20261023").andRespond(withSuccess(body(row("20261023150100", "1"),
                 row("20261023150000", "2"), row("20261022150000", "3")), MediaType.APPLICATION_JSON));
         assertEquals(List.of(recent("150000", 2)), provider.getRecentMinutes("005930"));
+        server.verify();
+    }
+
+    @Test
+    public void holidayRecentStillExcludesPreviousTradingDateWithoutRetry() {
+        Clock holiday = Clock.fixed(Instant.parse("2026-10-24T13:21:00Z"), ZoneId.of("Asia/Seoul"));
+        expect(scope, "20261024").andRespond(withSuccess(body(row("20261023153000", "71000")),
+                MediaType.APPLICATION_JSON).headers(continuation()));
+        assertTrue(provider(scope, holiday).getRecentMinutes("005930").isEmpty());
         server.verify();
     }
 
@@ -136,19 +172,22 @@ public class KiwoomMinuteChartProviderTest {
 
     @Test
     public void dailyHonors119120121BoundariesAndReversesAfterTruncation() {
-        for (int size : List.of(119, 120, 121)) {
-            server.reset();
-            List<String> rows = new ArrayList<>();
-            LocalDateTime end = DATE.atTime(15, 30);
-            for (int i = 0; i < size; i++) rows.add(row(stamp(end.minusMinutes(i)), Integer.toString(i)));
-            expect(scope, "20261023").andRespond(withSuccess(body(rows.toArray(new String[0])),
-                    MediaType.APPLICATION_JSON).headers(continuation()));
-            List<MinuteCandle> result = provider.getDailyMinutes(request());
-            int count = Math.min(size, 120);
-            assertEquals(count, result.size());
-            assertEquals(Integer.toString(count - 1), result.get(0).getClosePrice());
-            assertEquals("0", result.get(count - 1).getClosePrice());
-            server.verify();
+        for (LocalDate date : List.of(DATE, DATE.minusDays(1))) {
+            for (int size : List.of(119, 120, 121)) {
+                server.reset();
+                List<String> rows = new ArrayList<>();
+                LocalDateTime end = date.atTime(15, 30);
+                for (int i = 0; i < size; i++) rows.add(row(stamp(end.minusMinutes(i)), Integer.toString(i)));
+                expect(scope, "20261023").andRespond(withSuccess(body(rows.toArray(new String[0])),
+                        MediaType.APPLICATION_JSON).headers(continuation()));
+                List<MinuteCandle> result = provider.getDailyMinutes(request());
+                int count = Math.min(size, 120);
+                assertEquals(count, result.size());
+                assertEquals(Integer.toString(count - 1), result.get(0).getClosePrice());
+                assertEquals("0", result.get(count - 1).getClosePrice());
+                assertEquals(date.format(DateTimeFormatter.BASIC_ISO_DATE), result.get(count - 1).getDate());
+                server.verify();
+            }
         }
     }
 
@@ -403,12 +442,13 @@ public class KiwoomMinuteChartProviderTest {
                 assertTrue(http.getURI().toString().contains(path));
                 assertTrue(http.getURI().getQuery().contains("FID_INPUT_ISCD=005930"));
                 assertEquals(daily ? "FHKST03010230" : "FHKST03010200", http.getHeaders().getFirst("tr_id"));
-            }).andRespond(withSuccess("{\"output2\":[{\"stck_bsop_date\":\"20261023\",\"stck_cntg_hour\":\"150000\","
+            }).andRespond(withSuccess("{\"output2\":[{\"stck_bsop_date\":\"20261022\",\"stck_cntg_hour\":\"150000\","
                     + "\"stck_prpr\":\"71000\",\"stck_oprc\":\"100\",\"stck_hgpr\":\"200\",\"stck_lwpr\":\"50\"},"
-                    + "{\"stck_bsop_date\":\"20261023\",\"stck_cntg_hour\":\"145900\",\"stck_prpr\":\"\",\"stck_hgpr\":\"0\"},null]}",
+                    + "{\"stck_bsop_date\":\"20261022\",\"stck_cntg_hour\":\"145900\",\"stck_prpr\":\"\",\"stck_hgpr\":\"0\"},null]}",
                     MediaType.APPLICATION_JSON));
-            expect(scope, "20261023").andRespond(withSuccess(body(row("20261023150000", "-071000.00"),
-                    "{\"cntr_tm\":\"20261023145900\",\"cur_prc\":\"\",\"high_pric\":\"0\"}", "null"), MediaType.APPLICATION_JSON));
+            String candleDate = daily ? "20261022" : "20261023";
+            expect(scope, "20261023").andRespond(withSuccess(body(row(candleDate + "150000", "-071000.00"),
+                    "{\"cntr_tm\":\"" + candleDate + "145900\",\"cur_prc\":\"\",\"high_pric\":\"0\"}", "null"), MediaType.APPLICATION_JSON));
             List<MinuteCandle> kisDaily = daily ? kis.getDailyMinutes(request()) : List.of();
             List<MinuteCandle> kiwoomDaily = daily ? provider.getDailyMinutes(request()) : List.of();
             List<RecentMinuteCandle> kisRecent = daily ? List.of() : kis.getRecentMinutes("005930");
@@ -422,6 +462,7 @@ public class KiwoomMinuteChartProviderTest {
             JsonNode populated = kiwoomJson.get(daily ? 2 : 0);
             assertEquals(daily ? 6 : 5, populated.size());
             assertEquals(daily, populated.get("stck_prpr").isTextual());
+            if (daily) assertEquals("20261022", populated.get("stck_bsop_date").asText());
             assertTrue(kiwoomJson.get(daily ? 0 : 2).isNull());
             kisServer.verify();
             server.verify();
