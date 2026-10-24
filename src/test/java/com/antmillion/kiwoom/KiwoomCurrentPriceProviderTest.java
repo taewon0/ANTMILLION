@@ -79,6 +79,22 @@ public class KiwoomCurrentPriceProviderTest {
     }
 
     @Test
+    public void listContinuesAfterClassifiedFailuresAndPreservesValidDuplicates() {
+        expect(scope, "005930", "synthetic-token").andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+        expect(scope, "005930", "synthetic-token").andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        expect(scope, "005930", "synthetic-token").andRespond(withServerError());
+        expect(scope, "005930", "synthetic-token").andRespond(request -> { throw new IOException("synthetic-sensitive"); });
+        expect(scope, "005930", "synthetic-token").andRespond(withSuccess("{\"return_code\":10}", MediaType.APPLICATION_JSON));
+        expect(scope, "005930", "synthetic-token").andRespond(withSuccess("{\"cur_prc\":\"invalid\"}", MediaType.APPLICATION_JSON));
+        quote("005930", "100", "1");
+        quote("005930", "200", "2");
+        assertEquals(List.of(new CurrentQuote("005930", "100", "1"), new CurrentQuote("005930", "200", "2")),
+                provider.getCurrentPrices(java.util.Collections.nCopies(8, "005930")));
+        assertTrue(locks.keys.isEmpty());
+        server.verify();
+    }
+
+    @Test
     public void fallingPriceBecomesPositiveWonAndRateKeepsSignAndPrecision() {
         quote("005930", "-071000", "-01.20");
         assertEquals(List.of(new CurrentQuote("005930", "71000", "-01.20")),

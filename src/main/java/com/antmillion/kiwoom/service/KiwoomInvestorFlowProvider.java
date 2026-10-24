@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowRequest;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowResponse;
 import com.antmillion.kiwoom.dto.KiwoomInvestorFlowResponse.Flow;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository;
 import com.antmillion.marketdata.dto.InvestorFlow;
 import com.antmillion.marketdata.provider.InvestorFlowProvider;
@@ -52,8 +53,10 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
         limiter.acquireInvestorFlow(tokens);
         ResponseEntity<KiwoomInvestorFlowResponse> response = fetch(request);
         KiwoomInvestorFlowResponse data = response.getBody();
-        if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
-                || data.getFlows() == null) throw invalidResponse();
+        if (data != null) {
+            KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 외국인·기관 응답이 유효하지 않습니다.");
+        }
+        if (data == null || data.getFlows() == null) throw invalidResponse();
         // 뒤 페이지에 더 최신 값이 있을 수 있으므로 불완전한 목록을 최신 값으로 반환하지 않습니다.
         String continuation = response.getHeaders().getFirst("cont-yn");
         if (continuation != null && !continuation.isBlank() && !"N".equals(continuation)) throw invalidResponse();
@@ -89,13 +92,13 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 외국인·기관 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 외국인·기관 토큰 조회에 실패했습니다.");
         }
         try {
             return rest.exchange(tokens.getBaseUrl() + "/api/dostk/chart", HttpMethod.POST,
                     new HttpEntity<>(body, headers), KiwoomInvestorFlowResponse.class);
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 외국인·기관 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 외국인·기관 HTTP 요청에 실패했습니다.");
         }
     }
 
@@ -120,7 +123,7 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
         return value != null && !value.isEmpty();
     }
 
-    private static IllegalStateException invalidResponse() {
-        return new IllegalStateException("Kiwoom 외국인·기관 응답이 유효하지 않습니다.");
+    private static KiwoomMarketDataException invalidResponse() {
+        return KiwoomMarketDataException.invalidResponse("Kiwoom 외국인·기관 응답이 유효하지 않습니다.");
     }
 }
