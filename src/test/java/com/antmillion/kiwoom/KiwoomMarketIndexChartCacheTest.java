@@ -276,22 +276,121 @@ public class KiwoomMarketIndexChartCacheTest {
     }
 
     @Test
-    public void coldAndWarmReadsKeepMoreThan100RowsAndNormalizedValues() {
+    public void coldAndWarmReadsKeepNormalizedValuesWithinNewest100Rows() {
         List<String> rows = new ArrayList<>();
-        for (int i = 0; i < 101; i++) rows.add(row(end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE), "-0001"));
+        for (int i = 0; i < 97; i++) rows.add(row(end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE), "-0001"));
         rows.add(1, "null");
         rows.add(2, rows.get(0));
         rows.add("{\"dt\":\"20260101\",\"cur_prc\":\"\",\"open_pric\":null,\"high_pric\":\"99999999999999999999\"}");
+        rows.add(row("20251231", "100"));
         expectChart("001", "20261023", body("001", rows.toArray(new String[0])));
         List<MarketIndexCandle> cold = provider.getMarketIndexChart(request());
-        assertEquals(104, cold.size());
+        assertEquals(100, cold.size());
         assertEquals("0.01", cold.get(0).getCloseValue());
         assertNull(cold.get(1));
         assertEquals(cold.get(0), cold.get(2));
-        assertEquals(new MarketIndexCandle("20260101", "", null, "999999999999999999.99", null), cold.get(103));
+        assertEquals(new MarketIndexCandle("20260101", "", null, "999999999999999999.99", null), cold.get(99));
         assertEquals(cold, provider.getMarketIndexChart(request()));
         assertEquals(1, redis.writes.get());
         server.verify();
+    }
+
+    @Test
+    public void bothIndicesColdAndWarmReadsStoreNewestAtMost100Rows() throws Exception {
+        for (String code : List.of("0001", "1001")) {
+            for (int count : List.of(99, 100, 101)) {
+                setUp();
+                MarketIndexChartRequest query = new MarketIndexChartRequest(code, end());
+                List<String> rows = new ArrayList<>();
+                List<MarketIndexCandle> expected = new ArrayList<>();
+                for (int i = 0; i < count; i++) {
+                    String day = end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
+                    rows.add(row(day, "250050"));
+                    if (i < 100) expected.add(new MarketIndexCandle(day, "2500.50", "1.00", "2.00", "0.50"));
+                }
+                String remoteCode = code.equals("0001") ? "001" : "101";
+                expectChart(remoteCode, "20261023", body(remoteCode, rows.toArray(new String[0])));
+                assertEquals(expected, provider.getMarketIndexChart(query));
+                assertEquals(expected.size(), new ObjectMapper().readTree((String) redis.values.get(onlyKey()))
+                        .path("candles").size());
+                tokenRedis.failReads = true;
+                assertEquals(expected, provider.getMarketIndexChart(query));
+                assertEquals(1, tokenRedis.reads.size());
+                assertEquals(1, redis.writes.get());
+                assertEquals(Long.valueOf(60_000), redis.ttls.get(onlyKey()));
+                server.verify();
+            }
+        }
+    }
+
+    @Test
+    public void existingCacheAppliesSameLimitWithoutTokenHttpBudgetOrTtlRefresh() {
+        for (String code : List.of("0001", "1001")) {
+            for (int count : List.of(99, 100, 101)) {
+                setUp();
+                MarketIndexChartRequest query = new MarketIndexChartRequest(code, end());
+                List<MarketIndexCandle> saved = new ArrayList<>();
+                for (int i = 0; i < count; i++) {
+                    saved.add(new MarketIndexCandle(end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE),
+                            "2500.50", "1.00", "2.00", "0.50"));
+                }
+                // 이전 버전이 저장한 큰 v1 캐시를 그대로 읽습니다.
+                cache.save(VIRTUAL, query, saved);
+                Map<String, Object> before = new HashMap<>(redis.values);
+                long expiration = redis.expirations.get(onlyKey());
+                clock.advanceSeconds(59);
+                tokenRedis.values.clear();
+                List<MarketIndexCandle> result = provider.getMarketIndexChart(query);
+                assertEquals(saved.subList(0, Math.min(100, count)), result);
+                result.clear();
+                assertEquals(saved.subList(0, Math.min(100, count)), provider.getMarketIndexChart(query));
+                assertTrue(tokenRedis.reads.isEmpty());
+                assertEquals(before, redis.values);
+                assertEquals(1, redis.writes.get());
+                assertEquals(Long.valueOf(expiration), redis.expirations.get(onlyKey()));
+                limiter.acquireMarketIndexChart(tokens);
+                assertThrows(KiwoomRateLimitExceededException.class, () -> limiter.acquireMarketIndexChart(tokens));
+                server.verify();
+            }
+        }
+    }
+
+    @Test
+    public void invalidHttpTailBeyond100StillFailsWithoutCaching() {
+        for (String invalid : List.of(row("20260230", "100"), row("20261023", "100"), row("20260101", "1.5"))) {
+            setUp();
+            List<String> rows = new ArrayList<>();
+            for (int i = 0; i < 100; i++) {
+                rows.add(row(end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE), "100"));
+            }
+            rows.add(invalid);
+            expectChart("001", "20261023", body("001", rows.toArray(new String[0])));
+            assertThrows(IllegalStateException.class, () -> provider.getMarketIndexChart(request()));
+            assertTrue(redis.values.isEmpty());
+            server.verify();
+        }
+    }
+
+    @Test
+    public void invalidExistingCacheTailBeyond100IsStillAMiss() throws Exception {
+        List<MarketIndexCandle> saved = new ArrayList<>();
+        for (int i = 0; i < 101; i++) {
+            saved.add(new MarketIndexCandle(end().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE),
+                    "1.00", "1.00", "2.00", "0.50"));
+        }
+        cache.save(VIRTUAL, request(), saved);
+        String original = (String) redis.values.get(onlyKey());
+        for (String field : List.of("date", "close")) {
+            setUp();
+            cache.save(VIRTUAL, request(), saved);
+            JsonNode envelope = new ObjectMapper().readTree(original);
+            ((ObjectNode) envelope.path("candles").get(100)).put(field, "invalid");
+            redis.values.put(onlyKey(), envelope.toString());
+            expectChart("001", "20261023", body("001", row("20261023", "100")));
+            assertEquals(List.of(candle("1.00")), provider.getMarketIndexChart(request()));
+            assertEquals(1, tokenRedis.reads.size());
+            server.verify();
+        }
     }
 
     @Test
@@ -421,6 +520,45 @@ public class KiwoomMarketIndexChartCacheTest {
             assertEquals(cold, mapper.readTree(mvc.perform(get("/api/kis/marketIndex/" + code))
                     .andReturn().getResponse().getContentAsByteArray()));
             assertEquals(1, tokenRedis.reads.size());
+            server.verify();
+        }
+    }
+
+    @Test
+    public void bothIndicesMvcLimitsColdWarmAndExistingOversizedCacheToSame100Rows() throws Exception {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        String day = today.format(DateTimeFormatter.BASIC_ISO_DATE);
+        ObjectMapper mapper = new ObjectMapper();
+        for (String code : List.of("0001", "1001")) {
+            setUp();
+            List<String> rows = new ArrayList<>();
+            List<MarketIndexCandle> saved = new ArrayList<>();
+            for (int i = 0; i < 101; i++) {
+                String date = today.minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
+                rows.add(row(date, "250050"));
+                saved.add(new MarketIndexCandle(date, "2500.50", "1.00", "2.00", "0.50"));
+            }
+            String remoteCode = code.equals("0001") ? "001" : "101";
+            expectChart(remoteCode, day, body(remoteCode, rows.toArray(new String[0])));
+            MockMvc mvc = MockMvcBuilders.standaloneSetup(new KisController(null, null, null, null, provider, null)).build();
+            JsonNode cold = mapper.readTree(mvc.perform(get("/api/kis/marketIndex/" + code))
+                    .andReturn().getResponse().getContentAsByteArray());
+            assertEquals(100, cold.size());
+            assertEquals(5, cold.get(0).size());
+            assertEquals(day, cold.get(0).path("stck_bsop_date").asText());
+            assertEquals("2500.50", cold.get(0).path("bstp_nmix_prpr").asText());
+            assertEquals(today.minusDays(99).format(DateTimeFormatter.BASIC_ISO_DATE),
+                    cold.get(99).path("stck_bsop_date").asText());
+            assertEquals(cold, mapper.readTree(mvc.perform(get("/api/kis/marketIndex/" + code))
+                    .andReturn().getResponse().getContentAsByteArray()));
+            server.verify();
+            setUp();
+            cache.save(VIRTUAL, new MarketIndexChartRequest(code, today), saved);
+            tokenRedis.values.clear();
+            mvc = MockMvcBuilders.standaloneSetup(new KisController(null, null, null, null, provider, null)).build();
+            assertEquals(cold, mapper.readTree(mvc.perform(get("/api/kis/marketIndex/" + code))
+                    .andReturn().getResponse().getContentAsByteArray()));
+            assertTrue(tokenRedis.reads.isEmpty());
             server.verify();
         }
     }

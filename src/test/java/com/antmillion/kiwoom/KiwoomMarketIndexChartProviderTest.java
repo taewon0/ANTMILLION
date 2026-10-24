@@ -121,19 +121,25 @@ public class KiwoomMarketIndexChartProviderTest {
     }
 
     @Test
-    public void singleResponseDoesNotAddPaginationOrAnUndocumentedRowLimit() {
-        List<String> rows = new ArrayList<>();
-        List<MarketIndexCandle> expected = new ArrayList<>();
-        for (int i = 0; i < 101; i++) {
-            String day = LocalDate.of(2026, 10, 23).minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
-            rows.add(row(day, "250050"));
-            expected.add(candle(day, "2500.50"));
+    public void bothIndicesReturnNewestAtMost100RowsWithoutPagination() {
+        for (String code : List.of("0001", "1001")) {
+            for (int count : List.of(99, 100, 101)) {
+                setUp();
+                List<String> rows = new ArrayList<>();
+                List<MarketIndexCandle> expected = new ArrayList<>();
+                for (int i = 0; i < count; i++) {
+                    String day = request(code).getEndDate().minusDays(i).format(DateTimeFormatter.BASIC_ISO_DATE);
+                    rows.add(row(day, "250050"));
+                    if (i < 100) expected.add(candle(day, "2500.50"));
+                }
+                String remoteCode = code.equals("0001") ? "001" : "101";
+                expect(scope, remoteCode, "20261023", "synthetic-token").andRespond(withSuccess(
+                        body(remoteCode, rows.toArray(new String[0])), MediaType.APPLICATION_JSON).headers(continuation()));
+                assertEquals(expected, provider.getMarketIndexChart(request(code)));
+                assertEquals(1, redis.reads.size());
+                server.verify();
+            }
         }
-        expect(scope, "001", "20261023", "synthetic-token").andRespond(withSuccess(
-                body("001", rows.toArray(new String[0])), MediaType.APPLICATION_JSON).headers(continuation()));
-        assertEquals(expected, provider.getMarketIndexChart(request("0001")));
-        assertEquals(1, redis.reads.size());
-        server.verify();
     }
 
     @Test

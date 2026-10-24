@@ -27,6 +27,7 @@ import java.util.Optional;
 
 /** 코스피·코스닥 인증 활성화 시 REST Provider로 등록하며 설정으로 선택합니다. */
 public final class KiwoomMarketIndexChartProvider implements MarketIndexChartProvider {
+    private static final int MAX_CANDLES = 100;
     private final KiwoomTokenService tokens;
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
@@ -48,7 +49,7 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
         }
         String code = indexCode(request.getIndexCode());
         Optional<List<MarketIndexCandle>> cached = cache.find(tokens.getBaseUrl(), request);
-        if (cached.isPresent()) return cached.get();
+        if (cached.isPresent()) return newestCandles(cached.get());
         KiwoomMarketIndexChartRequest body = new KiwoomMarketIndexChartRequest(code,
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
@@ -62,7 +63,7 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
                 && !code.equals(data.getIndexCode())) || data.getPrices() == null) throw invalidResponse();
         List<MarketIndexCandle> result = new ArrayList<>();
         LocalDate previous = null;
-        // 기존 KIS adapter와 같이 단일 응답을 반환하고 연속 조회·임의 건수 제한은 추가하지 않습니다.
+        // 단일 응답 전체를 검증한 뒤 최신 100개만 반환하며 연속 조회는 하지 않습니다.
         for (Price price : data.getPrices()) {
             if (price == null) {
                 result.add(null);
@@ -76,8 +77,14 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
             result.add(new MarketIndexCandle(price.getDate(), point(price.getCloseValue()),
                     point(price.getOpenValue()), point(price.getHighValue()), point(price.getLowValue())));
         }
-        cache.save(tokens.getBaseUrl(), request, result);
-        return result;
+        List<MarketIndexCandle> newest = newestCandles(result);
+        cache.save(tokens.getBaseUrl(), request, newest);
+        return newest;
+    }
+
+    private static List<MarketIndexCandle> newestCandles(List<MarketIndexCandle> candles) {
+        // 이전 버전의 큰 캐시에도 같은 상한을 적용하고 null 행·중복·공급 순서를 보존합니다.
+        return new ArrayList<>(candles.subList(0, Math.min(MAX_CANDLES, candles.size())));
     }
 
     private KiwoomMarketIndexChartResponse fetch(KiwoomMarketIndexChartRequest body) {
