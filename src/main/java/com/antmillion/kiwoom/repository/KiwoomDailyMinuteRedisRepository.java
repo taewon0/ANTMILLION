@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
@@ -46,7 +47,7 @@ public final class KiwoomDailyMinuteRedisRepository {
             JsonNode candles = value.path("candles");
             if (!candles.isArray() || candles.size() > 120) return Optional.empty();
             List<MinuteCandle> result = new ArrayList<>();
-            LocalTime previous = null;
+            LocalDateTime previous = null;
             for (JsonNode candle : candles) {
                 if (candle.isNull()) {
                     result.add(null);
@@ -60,9 +61,10 @@ public final class KiwoomDailyMinuteRedisRepository {
                 }
                 LocalDate date = LocalDate.parse(dateValue.asText(), DateTimeFormatter.BASIC_ISO_DATE);
                 LocalTime time = LocalTime.parse(timeValue.asText(), TIME);
-                if (!date.equals(request.getDate()) || time.isAfter(LocalTime.of(15, 30))
-                        || (previous != null && time.isBefore(previous))) return Optional.empty();
-                previous = time;
+                LocalDateTime timestamp = date.atTime(time);
+                if (date.getYear() < 1 || date.isAfter(request.getDate()) || time.isAfter(LocalTime.of(15, 30))
+                        || (previous != null && timestamp.isBefore(previous))) return Optional.empty();
+                previous = timestamp;
                 result.add(new MinuteCandle(dateValue.asText(), timeValue.asText(), price(candle.get("close")),
                         price(candle.get("open")), price(candle.get("high")), price(candle.get("low"))));
             }
@@ -104,7 +106,8 @@ public final class KiwoomDailyMinuteRedisRepository {
     }
 
     private String key(String baseUrl, MinuteChartRequest request) {
-        StringBuilder key = new StringBuilder("kiwoom:chart:daily-minute:v1");
+        // 날짜 동일성 필터로 저장된 구 정책의 빈 결과를 재사용하지 않습니다.
+        StringBuilder key = new StringBuilder("kiwoom:chart:daily-minute:v2");
         for (String value : new String[]{baseUrl, "KRX", request.getStockCode(),
                 request.getDate().format(DateTimeFormatter.BASIC_ISO_DATE), "1", "1", "153000"}) {
             key.append(':').append(value.length()).append(':').append(value);
