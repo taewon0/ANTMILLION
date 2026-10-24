@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-async function indexScreen() {
+async function indexScreen(responseFor) {
     const source = readFileSync(join(__dirname, '../../src/main/webapp/resources/js/main/main.js'), 'utf8');
     const requests = [];
     const plotted = [];
@@ -27,7 +27,7 @@ async function indexScreen() {
         fetch: async url => {
             requests.push(url);
             const base = url.endsWith('0001') ? 2500 : 800;
-            return { json: async () => [
+            return { json: async () => responseFor ? responseFor(base) : [
                 { stck_bsop_date: '20261021', bstp_nmix_prpr: '0' + (base + 0.5),
                     bstp_nmix_oprc: '' + (base - 10.25), bstp_nmix_hgpr: '' + (base + 10.75), bstp_nmix_lwpr: '' + (base - 20) },
                 { stck_bsop_date: '20261020', bstp_nmix_prpr: '' + (base - 0.5),
@@ -75,5 +75,34 @@ test('원본 최신순 응답으로 지수 현재값과 전일 대비 표시 유
         assert.equal(elements.get('.main-market-index-price').textContent, '' + (base + 0.5));
         assert.equal(elements.get('.main-change-value').textContent, '+1.00');
         assert.equal(elements.get('.main-change-percent').textContent, '+' + (100 / (base - 0.5)).toFixed(2) + '%');
+    }
+});
+
+test('최대 100개 지수 응답의 전체 캔들과 최신 두 값의 전일 대비 표시 유지', async () => {
+    for (const count of [99, 100]) {
+        const screen = await indexScreen(base => Array.from({ length: count }, (_, i) => {
+            const date = new Date(Date.UTC(2026, 9, 23 - i)).toISOString().slice(0, 10).replaceAll('-', '');
+            return { stck_bsop_date: date, bstp_nmix_prpr: '' + (base + 0.5 - i),
+                bstp_nmix_oprc: '' + (base - i), bstp_nmix_hgpr: '' + (base + 1 - i),
+                bstp_nmix_lwpr: '' + (base - 1 - i) };
+        }));
+        assert.equal(screen.fitCount, 2);
+        for (const [index, name, base] of [[0, 'kospi', 2500], [1, 'kosdaq', 800]]) {
+            const candles = screen.plotted[index];
+            assert.equal(candles.length, count);
+            const oldest = new Date(Date.UTC(2026, 9, 23 - count + 1));
+            assert.deepEqual(candles[0], {
+                time: { year: oldest.getUTCFullYear(), month: oldest.getUTCMonth() + 1, day: oldest.getUTCDate() },
+                open: base - count + 1, high: base - count + 2, low: base - count,
+                close: base + 1.5 - count
+            });
+            assert.deepEqual(candles.at(-1), { time: { year: 2026, month: 10, day: 23 },
+                open: base, high: base + 1, low: base - 1, close: base + 0.5 });
+            const elements = screen.cards.get('.main-grid-' + name).elements;
+            assert.equal(elements.get('.main-market-index-price').textContent, '' + (base + 0.5));
+            assert.equal(elements.get('.main-change-value').textContent, '+1.00');
+            assert.equal(elements.get('.main-change-percent').textContent,
+                '+' + (100 / (base - 0.5)).toFixed(2) + '%');
+        }
     }
 });
