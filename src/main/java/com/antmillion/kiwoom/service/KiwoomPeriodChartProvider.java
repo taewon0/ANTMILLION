@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomPeriodChartResponse.Price;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomPeriodChartRedisRepository;
 import com.antmillion.marketdata.dto.PeriodCandle;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
@@ -53,7 +54,10 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
         // 연속 조회 가능 헤더가 있어도 추가 호출로 기간을 채우지 않습니다.
         limiter.acquirePeriodChart(tokens, apiId);
         KiwoomPeriodChartResponse data = fetch(apiId, body).getBody();
-        if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
+        if (data != null) {
+            KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 기간별 차트 응답이 유효하지 않습니다.");
+        }
+        if (data == null
                 || (data.getStockCode() != null && !data.getStockCode().isBlank()
                 && !request.getStockCode().equals(data.getStockCode()))) {
             throw invalidResponse();
@@ -88,14 +92,14 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 기간별 차트 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 기간별 차트 토큰 조회에 실패했습니다.");
         }
         headers.set("api-id", apiId);
         try {
             return rest.exchange(tokens.getBaseUrl() + "/api/dostk/chart", HttpMethod.POST,
                     new HttpEntity<>(body, headers), KiwoomPeriodChartResponse.class);
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 기간별 차트 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 기간별 차트 HTTP 요청에 실패했습니다.");
         }
     }
 
@@ -143,11 +147,11 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
             // 방향 부호를 제거하되 원 단위 정수 문자열에 Integer 범위 제한을 두지 않습니다.
             return new BigDecimal(text).abs().toBigIntegerExact().toString();
         } catch (ArithmeticException | NumberFormatException e) {
-            throw new IllegalStateException("Kiwoom 기간별 차트 가격이 유효하지 않습니다.");
+            throw KiwoomMarketDataException.invalidResponse("Kiwoom 기간별 차트 가격이 유효하지 않습니다.");
         }
     }
 
-    private static IllegalStateException invalidResponse() {
-        return new IllegalStateException("Kiwoom 기간별 차트 응답이 유효하지 않습니다.");
+    private static KiwoomMarketDataException invalidResponse() {
+        return KiwoomMarketDataException.invalidResponse("Kiwoom 기간별 차트 응답이 유효하지 않습니다.");
     }
 }

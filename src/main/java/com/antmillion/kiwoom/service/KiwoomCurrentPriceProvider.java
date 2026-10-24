@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomCurrentPriceRequest;
 import com.antmillion.kiwoom.dto.KiwoomCurrentPriceResponse;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomCurrentPriceRedisRepository;
 import com.antmillion.marketdata.dto.CurrentQuote;
 import com.antmillion.marketdata.provider.CurrentPriceProvider;
@@ -88,7 +89,7 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 현재가 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 현재가 토큰 조회에 실패했습니다.");
         }
         headers.set("api-id", "ka10001");
         KiwoomCurrentPriceResponse response;
@@ -97,14 +98,17 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
                     new HttpEntity<>(new KiwoomCurrentPriceRequest(stockCode), headers),
                     KiwoomCurrentPriceResponse.class);
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 현재가 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 현재가 HTTP 요청에 실패했습니다.");
         }
-        if (response == null || (response.getReturnCode() != null && response.getReturnCode() != 0)) {
-            throw new IllegalStateException("Kiwoom 현재가 응답이 유효하지 않습니다.");
+        if (response != null) {
+            KiwoomMarketDataException.checkReturnCode(response.getReturnCode(), "Kiwoom 현재가 응답이 유효하지 않습니다.");
+        }
+        if (response == null) {
+            throw KiwoomMarketDataException.invalidResponse("Kiwoom 현재가 응답이 유효하지 않습니다.");
         }
         if (response.getStockCode() != null && !response.getStockCode().isBlank()
                 && !stockCode.equals(response.getStockCode())) {
-            throw new IllegalStateException("Kiwoom 현재가 응답의 종목코드가 일치하지 않습니다.");
+            throw KiwoomMarketDataException.invalidResponse("Kiwoom 현재가 응답의 종목코드가 일치하지 않습니다.");
         }
         return response;
     }
@@ -118,7 +122,7 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
             // 키움 가격의 방향 부호를 제거하고 원 단위 정수·Integer 범위를 정확히 검사합니다.
             return Integer.toString(new BigDecimal(text).abs().intValueExact());
         } catch (ArithmeticException | NumberFormatException e) {
-            throw new IllegalStateException("Kiwoom 현재가 값이 유효하지 않습니다.");
+            throw KiwoomMarketDataException.invalidResponse("Kiwoom 현재가 값이 유효하지 않습니다.");
         }
     }
 
@@ -126,7 +130,7 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
         if (value == null) return null;
         String text = value.trim();
         if (!text.isEmpty() && !text.matches("[+-]?[0-9]+(?:\\.[0-9]+)?")) {
-            throw new IllegalStateException("Kiwoom 등락률 값이 유효하지 않습니다.");
+            throw KiwoomMarketDataException.invalidResponse("Kiwoom 등락률 값이 유효하지 않습니다.");
         }
         return text;
     }

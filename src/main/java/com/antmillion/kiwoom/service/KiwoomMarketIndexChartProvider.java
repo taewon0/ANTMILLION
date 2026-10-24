@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomMarketIndexChartResponse.Price;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomMarketIndexChartRedisRepository;
 import com.antmillion.marketdata.dto.MarketIndexCandle;
 import com.antmillion.marketdata.dto.MarketIndexChartRequest;
@@ -53,7 +54,10 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
         limiter.acquireMarketIndexChart(tokens);
         KiwoomMarketIndexChartResponse data = fetch(body);
-        if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
+        if (data != null) {
+            KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 지수 일봉 응답이 유효하지 않습니다.");
+        }
+        if (data == null
                 || (data.getIndexCode() != null && !data.getIndexCode().isBlank()
                 && !code.equals(data.getIndexCode())) || data.getPrices() == null) throw invalidResponse();
         List<MarketIndexCandle> result = new ArrayList<>();
@@ -83,13 +87,13 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 지수 일봉 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 지수 일봉 토큰 조회에 실패했습니다.");
         }
         try {
             return rest.exchange(tokens.getBaseUrl() + "/api/dostk/chart", HttpMethod.POST,
                     new HttpEntity<>(body, headers), KiwoomMarketIndexChartResponse.class).getBody();
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 지수 일봉 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 지수 일봉 HTTP 요청에 실패했습니다.");
         }
     }
 
@@ -119,7 +123,7 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
         return new BigDecimal(text).abs().movePointLeft(2).toPlainString();
     }
 
-    private static IllegalStateException invalidResponse() {
-        return new IllegalStateException("Kiwoom 지수 일봉 응답이 유효하지 않습니다.");
+    private static KiwoomMarketDataException invalidResponse() {
+        return KiwoomMarketDataException.invalidResponse("Kiwoom 지수 일봉 응답이 유효하지 않습니다.");
     }
 }

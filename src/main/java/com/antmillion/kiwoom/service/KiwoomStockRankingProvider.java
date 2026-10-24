@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingRequest;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingResponse;
 import com.antmillion.kiwoom.dto.KiwoomStockRankingResponse.Stock;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository;
 import com.antmillion.marketdata.dto.RankedStock;
 import com.antmillion.marketdata.provider.StockRankingProvider;
@@ -52,8 +53,10 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
         // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
         limiter.acquireStockRanking(tokens);
         KiwoomStockRankingResponse response = fetch(request);
-        if (response == null || (response.getReturnCode() != null && response.getReturnCode() != 0)
-                || response.getStocks() == null) throw invalidResponse();
+        if (response != null) {
+            KiwoomMarketDataException.checkReturnCode(response.getReturnCode(), "Kiwoom 종목 순위 응답이 유효하지 않습니다.");
+        }
+        if (response == null || response.getStocks() == null) throw invalidResponse();
         List<RankedStock> result = new ArrayList<>();
         // 기존 KIS 단일 조회의 최대 30건에 맞추며 연속 조회·재정렬은 하지 않습니다.
         for (int i = 0; i < Math.min(30, response.getStocks().size()); i++) {
@@ -80,13 +83,13 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 종목 순위 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 종목 순위 토큰 조회에 실패했습니다.");
         }
         try {
             return rest.postForObject(tokens.getBaseUrl() + "/api/dostk/rkinfo",
                     new HttpEntity<>(body, headers), KiwoomStockRankingResponse.class);
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 종목 순위 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 종목 순위 HTTP 요청에 실패했습니다.");
         }
     }
 
@@ -106,7 +109,7 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
         return text;
     }
 
-    private static IllegalStateException invalidResponse() {
-        return new IllegalStateException("Kiwoom 종목 순위 응답이 유효하지 않습니다.");
+    private static KiwoomMarketDataException invalidResponse() {
+        return KiwoomMarketDataException.invalidResponse("Kiwoom 종목 순위 응답이 유효하지 않습니다.");
     }
 }

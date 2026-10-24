@@ -3,6 +3,7 @@ package com.antmillion.kiwoom.service;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartRequest;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartResponse;
 import com.antmillion.kiwoom.dto.KiwoomMinuteChartResponse.Price;
+import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomDailyMinuteRedisRepository;
 import com.antmillion.marketdata.dto.MinuteCandle;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
@@ -106,7 +107,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         try {
             headers.setBearerAuth(tokens.getAccessToken());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Kiwoom 분봉 토큰 조회에 실패했습니다.");
+            throw KiwoomMarketDataException.tokenAccess("Kiwoom 분봉 토큰 조회에 실패했습니다.");
         }
         KiwoomMinuteChartResponse data;
         try {
@@ -114,9 +115,12 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
             data = rest.exchange(tokens.getBaseUrl() + "/api/dostk/chart", HttpMethod.POST,
                     new HttpEntity<>(body, headers), KiwoomMinuteChartResponse.class).getBody();
         } catch (RestClientException e) {
-            throw new IllegalStateException("Kiwoom 분봉 HTTP 요청에 실패했습니다.");
+            throw KiwoomMarketDataException.fromHttp(e, "Kiwoom 분봉 HTTP 요청에 실패했습니다.");
         }
-        if (data == null || (data.getReturnCode() != null && data.getReturnCode() != 0)
+        if (data != null) {
+            KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 분봉 응답이 유효하지 않습니다.");
+        }
+        if (data == null
                 || (data.getStockCode() != null && !data.getStockCode().isBlank()
                 && !stockCode.equals(data.getStockCode()))) throw invalidResponse();
         return data.getPrices();
@@ -179,7 +183,7 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         }
     }
 
-    private static IllegalStateException invalidResponse() {
-        return new IllegalStateException("Kiwoom 분봉 응답이 유효하지 않습니다.");
+    private static KiwoomMarketDataException invalidResponse() {
+        return KiwoomMarketDataException.invalidResponse("Kiwoom 분봉 응답이 유효하지 않습니다.");
     }
 }
