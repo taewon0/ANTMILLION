@@ -7,6 +7,7 @@ import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.StockVolumeRank;
 import com.antmillion.kis.dto.StockVolumeRankRequest;
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.exception.KisMarketDataException;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.repository.KisStockVolumeRankRedisRepository;
 import com.antmillion.kis.service.KisApiService;
@@ -26,7 +27,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Proxy;
@@ -204,7 +204,7 @@ public class KisStockRankingProviderTest {
     public void remoteErrorPropagatesWithoutRetryOrCacheWrite() {
         server.expect(request -> assertEquals(url("3", "0000000000"), request.getURI().toString()))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThrows(HttpServerErrorException.class, () -> provider.getTradingValueRanks());
+        assertThrows(KisMarketDataException.class, () -> provider.getTradingValueRanks());
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }

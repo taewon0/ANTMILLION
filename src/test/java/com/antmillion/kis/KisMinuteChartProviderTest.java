@@ -9,6 +9,7 @@ import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.StreamMinutePrice;
 import com.antmillion.kis.dto.StreamMinutePriceRequest;
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.exception.KisMarketDataException;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.repository.KisChartRedisRepository;
 import com.antmillion.kis.service.KisApiService;
@@ -33,7 +34,6 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -362,9 +362,9 @@ public class KisMinuteChartProviderTest {
         LocalTime before = LocalTime.now().withNano(0);
         server.expect(req -> assertRecentUrl(req.getURI().toString(), before))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThrows(HttpServerErrorException.class, () -> provider.getDailyMinutes(request()));
+        assertThrows(KisMarketDataException.class, () -> provider.getDailyMinutes(request()));
         assertEquals(1, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
-        assertThrows(HttpServerErrorException.class, () -> provider.getRecentMinutes("005930"));
+        assertThrows(KisMarketDataException.class, () -> provider.getRecentMinutes("005930"));
         assertEquals(0, limiter.getAvailableTokens(KisRateLimitTestSupport.scope(baseUrl)));
         assertThrows(RateLimitExceededException.class, () -> provider.getRecentMinutes("005930"));
         assertTrue(redis.ttls.isEmpty());

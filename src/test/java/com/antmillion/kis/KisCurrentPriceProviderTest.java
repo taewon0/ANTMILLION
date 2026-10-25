@@ -6,6 +6,7 @@ import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPrice;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.exception.KisMarketDataException;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.service.KisApiService;
 import com.antmillion.kis.service.KisCurrentPriceProvider;
@@ -21,7 +22,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
@@ -144,7 +144,8 @@ public class KisCurrentPriceProviderTest {
         redis.values.put(key(false), 1000);
         server.expect(request -> assertEquals(url("005930", "J"), request.getURI().toString()))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThrows(HttpServerErrorException.class, () -> provider.getCurrentPrice("005930"));
+        assertEquals(KisMarketDataException.Kind.SERVER,
+                assertThrows(KisMarketDataException.class, () -> provider.getCurrentPrice("005930")).getKind());
         assertEquals(1000, redis.values.get(key(false)));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
@@ -153,9 +154,39 @@ public class KisCurrentPriceProviderTest {
     @Test
     public void invalidSinglePayloadStillFailsWithoutWritingCache() {
         expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"invalid\"}}");
-        assertThrows(NumberFormatException.class, () -> provider.getCurrentPrice("005930"));
+        assertEquals(KisMarketDataException.Kind.INVALID_RESPONSE,
+                assertThrows(KisMarketDataException.class, () -> provider.getCurrentPrice("005930")).getKind());
         assertTrue(redis.ttls.isEmpty());
         server.verify();
+    }
+
+    @Test
+    public void listKeepsValidDuplicatesAndDoesNotLogRawFailure() {
+        org.apache.log4j.Logger logger = org.apache.log4j.Logger.getLogger(KisApiService.class);
+        org.apache.log4j.Level previous = logger.getLevel();
+        java.io.StringWriter output = new java.io.StringWriter();
+        org.apache.log4j.WriterAppender appender = new org.apache.log4j.WriterAppender(
+                new org.apache.log4j.PatternLayout("%m%n"), output);
+        logger.addAppender(appender);
+        logger.setLevel(org.apache.log4j.Level.ERROR);
+        try {
+            server.expect(request -> assertEquals(url("000660", "J"), request.getURI().toString()))
+                    .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE).body("synthetic-sensitive-body"));
+            expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"071000\"}}");
+            expectQuote("005930", "J", "{\"output\":{\"stck_prpr\":\"071000\"}}");
+            assertEquals(List.of(new CurrentQuote("005930", "071000", null), new CurrentQuote("005930", "071000", null)),
+                    provider.getCurrentPrices(List.of("000660", "005930", "005930")));
+            assertTrue(output.toString().contains("000660"));
+            for (String secret : List.of("synthetic-sensitive", "synthetic-token", "synthetic-key", "synthetic-secret")) {
+                assertFalse(output.toString().contains(secret));
+            }
+            assertEquals(1, redis.ttls.size());
+            server.verify();
+        } finally {
+            logger.removeAppender(appender);
+            logger.setLevel(previous);
+            appender.close();
+        }
     }
 
     @Test

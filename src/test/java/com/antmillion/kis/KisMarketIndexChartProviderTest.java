@@ -7,6 +7,7 @@ import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.MarketIndexPrice;
 import com.antmillion.kis.dto.MarketIndexPriceRequest;
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.exception.KisMarketDataException;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.repository.KisMarketIndexChartRedisRepository;
 import com.antmillion.kis.service.KisApiService;
@@ -27,7 +28,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Proxy;
@@ -200,7 +200,7 @@ public class KisMarketIndexChartProviderTest {
     public void remoteFailurePropagatesWithoutRetryOrCacheWrite() {
         server.expect(request -> assertEquals(url("0001", "D", "U"), request.getURI().toString()))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThrows(HttpServerErrorException.class, () -> provider.getMarketIndexChart(request("0001")));
+        assertThrows(KisMarketDataException.class, () -> provider.getMarketIndexChart(request("0001")));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
