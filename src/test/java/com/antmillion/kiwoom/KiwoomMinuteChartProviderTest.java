@@ -521,7 +521,7 @@ public class KiwoomMinuteChartProviderTest {
         KiwoomTokenServiceTest.MemoryRedis chartRedis = new KiwoomTokenServiceTest.MemoryRedis(tokenClock);
         chartRedis.failWrites = true;
         return new KiwoomMinuteChartProvider(tokens(requestScope), rest, limiter,
-                new KiwoomDailyMinuteRedisRepository(chartRedis, tokenClock), queryClock);
+                new KiwoomDailyMinuteRedisRepository(chartRedis, tokenClock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults(), queryClock);
     }
 
     private void cacheToken(KiwoomAccessTokenScope requestScope) {

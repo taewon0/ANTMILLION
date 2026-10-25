@@ -221,7 +221,7 @@ public class KiwoomMarketDataErrorTest {
         }
         if (operation.equals("daily") || operation.equals("recent")) {
             KiwoomMinuteChartProvider provider = new KiwoomMinuteChartProvider(tokens, rest, limiter,
-                    new KiwoomDailyMinuteRedisRepository(redis, clock), clock);
+                    new KiwoomDailyMinuteRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults(), clock);
             return operation.equals("daily") ? provider.getDailyMinutes(new MinuteChartRequest("005930", DATE))
                     : provider.getRecentMinutes("005930");
         }

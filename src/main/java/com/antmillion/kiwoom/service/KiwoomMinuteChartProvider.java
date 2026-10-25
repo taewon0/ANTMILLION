@@ -9,6 +9,8 @@ import com.antmillion.marketdata.dto.MinuteCandle;
 import com.antmillion.marketdata.dto.MinuteChartRequest;
 import com.antmillion.marketdata.dto.RecentMinuteCandle;
 import com.antmillion.marketdata.provider.MinuteChartProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -38,20 +40,22 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomDailyMinuteRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
     private final Clock clock;
 
     public KiwoomMinuteChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomDailyMinuteRedisRepository cache) {
+            KiwoomDailyMinuteRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
         // 기존 Controller/서비스와 같은 JVM 기본 시간대를 유지합니다.
-        this(tokens, rest, limiter, cache, Clock.systemDefaultZone());
+        this(tokens, rest, limiter, cache, circuitBreakers, Clock.systemDefaultZone());
     }
 
     public KiwoomMinuteChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomDailyMinuteRedisRepository cache, Clock clock) {
+            KiwoomDailyMinuteRedisRepository cache, MarketDataCircuitBreakers circuitBreakers, Clock clock) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -64,8 +68,19 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         validateStockCode(request.getStockCode());
         Optional<List<MinuteCandle>> cached = cache.find(tokens.getBaseUrl(), request);
         if (cached.isPresent()) return cached.get();
+        // 캐시 적중은 OPEN에서도 반환하며 탐색 허가와 성공 표본을 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquireMinuteChart(tokens);
+            List<MinuteCandle> result = call.execute(() -> loadDaily(request));
+            if (result == null) return Collections.emptyList();
+            cache.save(tokens.getBaseUrl(), request, result);
+            return result;
+        }
+    }
+
+    private List<MinuteCandle> loadDaily(MinuteChartRequest request) {
         List<Price> prices = fetch(request.getStockCode(), request.getDate());
-        if (prices == null) return Collections.emptyList();
+        if (prices == null) return null;
         List<MinuteCandle> result = new ArrayList<>();
         for (Price price : select(prices, request.getDate().atTime(15, 30), 120, false)) {
             if (price == null) {
@@ -77,13 +92,20 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
             }
         }
         Collections.reverse(result);
-        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 
     @Override
     public List<RecentMinuteCandle> getRecentMinutes(String stockCode) {
+        validateStockCode(stockCode);
         LocalDateTime now = LocalDateTime.now(clock);
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquireMinuteChart(tokens);
+            return call.execute(() -> loadRecent(stockCode, now));
+        }
+    }
+
+    private List<RecentMinuteCandle> loadRecent(String stockCode, LocalDateTime now) {
         List<Price> prices = fetch(stockCode, now.toLocalDate());
         if (prices == null) return null;
         List<RecentMinuteCandle> result = new ArrayList<>();
@@ -99,8 +121,6 @@ public final class KiwoomMinuteChartProvider implements MinuteChartProvider {
         validateStockCode(stockCode);
         KiwoomMinuteChartRequest body = new KiwoomMinuteChartRequest(stockCode,
                 date.format(DateTimeFormatter.BASIC_ISO_DATE));
-        // 두 분봉 경로는 같은 TR 예산을 소비하며 토큰 조회보다 먼저 거절합니다.
-        limiter.acquireMinuteChart(tokens);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType("application", "json", StandardCharsets.UTF_8));
         headers.set("api-id", "ka10080");

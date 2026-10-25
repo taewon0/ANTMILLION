@@ -202,6 +202,38 @@ public class KiwoomMarketDataRoutingTest {
     }
 
     @Test
+    public void selectedMinuteChartSharesCurrentAndPeriodCircuitAndBlocksBothPaths() {
+        Map<String, Object> props = Fixture.properties("kiwoom", "virtual");
+        props.put("marketdata.circuit-breaker.minimum-calls", "2");
+        try (Fixture f = new Fixture(props, null)) {
+            f.start(); f.seedToken();
+            CurrentPriceProvider prices = f.context.getBean(CurrentPriceProvider.class);
+            PeriodChartProvider periods = f.context.getBean(PeriodChartProvider.class);
+            MinuteChartProvider minutes = f.context.getBean(MinuteChartProvider.class);
+            Object shared = f.context.getBean(com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.class);
+            for (Object adapter : List.of(prices, periods, minutes)) {
+                assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(adapter, "circuitBreakers"));
+            }
+            f.server.expect(requestTo(f.base() + "/api/dostk/chart")).andRespond(withServerError());
+            f.server.expect(requestTo(f.base() + "/api/dostk/chart")).andRespond(withServerError());
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> minutes.getDailyMinutes(new MinuteChartRequest("005930", DATE)));
+            f.refill();
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> periods.getPeriodChart(period()));
+            int reads = f.redis.reads.size();
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> minutes.getRecentMinutes("005930"));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> minutes.getDailyMinutes(new MinuteChartRequest("005930", DATE)));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            // 일별 캐시 확인 한 번만 추가되며 토큰 조회는 없습니다.
+            assertEquals(reads + 1, f.redis.reads.size());
+        }
+    }
+
+    @Test
     public void allNineOperationsUseRegisteredAdaptersAndDedicatedHttp() {
         try (Fixture f = new Fixture("kiwoom", "virtual")) {
             f.start();
