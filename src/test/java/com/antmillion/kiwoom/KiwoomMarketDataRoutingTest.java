@@ -234,6 +234,43 @@ public class KiwoomMarketDataRoutingTest {
     }
 
     @Test
+    public void selectedIndexChartSharesCurrentPeriodAndMinuteCircuit() {
+        Map<String, Object> props = Fixture.properties("kiwoom", "virtual");
+        props.put("marketdata.circuit-breaker.minimum-calls", "2");
+        try (Fixture f = new Fixture(props, null)) {
+            f.start(); f.seedToken();
+            CurrentPriceProvider prices = f.context.getBean(CurrentPriceProvider.class);
+            PeriodChartProvider periods = f.context.getBean(PeriodChartProvider.class);
+            MinuteChartProvider minutes = f.context.getBean(MinuteChartProvider.class);
+            MarketIndexChartProvider indexes = f.context.getBean(MarketIndexChartProvider.class);
+            Object shared = f.context.getBean(com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.class);
+            for (Object adapter : List.of(prices, periods, minutes, indexes)) {
+                assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(adapter, "circuitBreakers"));
+            }
+            f.server.expect(requestTo(f.base() + "/api/dostk/chart")).andRespond(withServerError());
+            f.server.expect(requestTo(f.base() + "/api/dostk/chart")).andRespond(withServerError());
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> indexes.getMarketIndexChart(new MarketIndexChartRequest("0001", DATE)));
+            f.refill();
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> minutes.getRecentMinutes("005930"));
+            int reads = f.redis.reads.size();
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> indexes.getMarketIndexChart(new MarketIndexChartRequest("1001", DATE)));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> periods.getPeriodChart(period()));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> minutes.getDailyMinutes(new MinuteChartRequest("005930", DATE)));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> minutes.getRecentMinutes("005930"));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            // 지수·기간봉·일별 분봉의 캐시만 확인하며 토큰/HTTP는 사용하지 않습니다.
+            assertEquals(reads + 3, f.redis.reads.size());
+        }
+    }
+
+    @Test
     public void allNineOperationsUseRegisteredAdaptersAndDedicatedHttp() {
         try (Fixture f = new Fixture("kiwoom", "virtual")) {
             f.start();

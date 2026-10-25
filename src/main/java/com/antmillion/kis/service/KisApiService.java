@@ -327,21 +327,23 @@ public class KisApiService {
      * @return 한국투자증권 api 반환값
      */
     private KisMarketIndexPriceResponse marketIndexPricesAPI(KisRestRequestScope scope, MarketIndexPriceRequest request) {
-        return rateLimitedClient.callWithoutCache(
-                scope,
-                () -> {
-                    String token = getMarketDataAccessToken(scope.getTokenScope());
-                    HttpHeaders headers = createApiHeader(token, scope, "FHPUP02120000");
-                    String url = buildMarketIndexApiUrl(scope.getBaseUrl(), request);
-                    HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-                    KisMarketIndexPriceResponse responseBody = exchangeMarketData(url, httpEntity, KisMarketIndexPriceResponse.class,
-                            KisMarketIndexPriceResponse::getReturnCode, "국내 시장 지수 차트 데이터 조회 실패");
-                    if (responseBody.getOutput2() != null) {
-                        return responseBody;
-                    }
-                    throw KisMarketDataException.invalidResponse("국내 시장 지수 차트 데이터 조회 실패");
-                }
-        );
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithoutCache(
+                    scope,
+                    () -> call.execute(() -> {
+                        String token = getMarketDataAccessToken(scope.getTokenScope());
+                        HttpHeaders headers = createApiHeader(token, scope, "FHPUP02120000");
+                        String url = buildMarketIndexApiUrl(scope.getBaseUrl(), request);
+                        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                        KisMarketIndexPriceResponse responseBody = exchangeMarketData(url, httpEntity, KisMarketIndexPriceResponse.class,
+                                KisMarketIndexPriceResponse::getReturnCode, "국내 시장 지수 차트 데이터 조회 실패");
+                        if (responseBody.getOutput2() != null) {
+                            return responseBody;
+                        }
+                        throw KisMarketDataException.invalidResponse("국내 시장 지수 차트 데이터 조회 실패");
+                    })
+            );
+        }
     }
 
     /**

@@ -227,7 +227,7 @@ public class KiwoomMarketDataErrorTest {
         }
         if (operation.equals("index")) {
             return new KiwoomMarketIndexChartProvider(tokens, rest, limiter,
-                    new KiwoomMarketIndexChartRedisRepository(redis, clock))
+                    new KiwoomMarketIndexChartRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults())
                     .getMarketIndexChart(new MarketIndexChartRequest("0001", DATE));
         }
         if (operation.equals("flow")) {

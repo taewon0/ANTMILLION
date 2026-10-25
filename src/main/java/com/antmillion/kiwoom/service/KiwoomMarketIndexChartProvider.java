@@ -8,6 +8,8 @@ import com.antmillion.kiwoom.repository.KiwoomMarketIndexChartRedisRepository;
 import com.antmillion.marketdata.dto.MarketIndexCandle;
 import com.antmillion.marketdata.dto.MarketIndexChartRequest;
 import com.antmillion.marketdata.provider.MarketIndexChartProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -32,13 +34,16 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomMarketIndexChartRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
 
     public KiwoomMarketIndexChartProvider(KiwoomTokenService tokens, RestTemplate rest,
-            KiwoomRestRateLimiter limiter, KiwoomMarketIndexChartRedisRepository cache) {
+            KiwoomRestRateLimiter limiter, KiwoomMarketIndexChartRedisRepository cache,
+            MarketDataCircuitBreakers circuitBreakers) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
     }
 
     @Override
@@ -50,10 +55,18 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
         String code = indexCode(request.getIndexCode());
         Optional<List<MarketIndexCandle>> cached = cache.find(tokens.getBaseUrl(), request);
         if (cached.isPresent()) return newestCandles(cached.get());
+        // 캐시 적중은 OPEN에서도 반환하며 탐색 허가와 성공 표본을 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquireMarketIndexChart(tokens);
+            List<MarketIndexCandle> result = call.execute(() -> load(request, code));
+            cache.save(tokens.getBaseUrl(), request, result);
+            return result;
+        }
+    }
+
+    private List<MarketIndexCandle> load(MarketIndexChartRequest request, String code) {
         KiwoomMarketIndexChartRequest body = new KiwoomMarketIndexChartRequest(code,
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
-        // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
-        limiter.acquireMarketIndexChart(tokens);
         KiwoomMarketIndexChartResponse data = fetch(body);
         if (data != null) {
             KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 지수 일봉 응답이 유효하지 않습니다.");
@@ -77,9 +90,7 @@ public final class KiwoomMarketIndexChartProvider implements MarketIndexChartPro
             result.add(new MarketIndexCandle(price.getDate(), point(price.getCloseValue()),
                     point(price.getOpenValue()), point(price.getHighValue()), point(price.getLowValue())));
         }
-        List<MarketIndexCandle> newest = newestCandles(result);
-        cache.save(tokens.getBaseUrl(), request, newest);
-        return newest;
+        return newestCandles(result);
     }
 
     private static List<MarketIndexCandle> newestCandles(List<MarketIndexCandle> candles) {
