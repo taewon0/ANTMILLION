@@ -239,28 +239,30 @@ public class KisApiService {
      * @return 한국투자증권 API 반환값
      */
     private KisChartStockPriceResponse periodStockPricesAPI(KisRestRequestScope scope, ChartStockPriceRequest request) {
-        // Rate Limit + 캐싱 적용
-        return rateLimitedClient.callWithCache(
-                scope,
-                null,
-                () -> {
-                    //1.접근 토큰 얻기
-                    String token = getMarketDataAccessToken(scope.getTokenScope());
-                    //2.헤더 설정
-                    HttpHeaders headers = createApiHeader(token, scope, "FHKST03010100");
-                    //3.URL 생성
-                    String url = buildPeriodApiUrl(scope.getBaseUrl(), request);
-                    //4.API 호출
-                    HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-                    KisChartStockPriceResponse responseBody = exchangeMarketData(url, httpEntity, KisChartStockPriceResponse.class,
-                            KisChartStockPriceResponse::getReturnCode, "기간별 차트 데이터 조회 실패");
-                    if (responseBody.getOutput2() != null) {
-                        return responseBody;
-                    }
-                    throw KisMarketDataException.invalidResponse("기간별 차트 데이터 조회 실패");
-                },
-                60 // TTL 60초
-        );
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            // Rate Limit + 캐싱 적용
+            return rateLimitedClient.callWithCache(
+                    scope,
+                    null,
+                    () -> call.execute(() -> {
+                        //1.접근 토큰 얻기
+                        String token = getMarketDataAccessToken(scope.getTokenScope());
+                        //2.헤더 설정
+                        HttpHeaders headers = createApiHeader(token, scope, "FHKST03010100");
+                        //3.URL 생성
+                        String url = buildPeriodApiUrl(scope.getBaseUrl(), request);
+                        //4.API 호출
+                        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                        KisChartStockPriceResponse responseBody = exchangeMarketData(url, httpEntity, KisChartStockPriceResponse.class,
+                                KisChartStockPriceResponse::getReturnCode, "기간별 차트 데이터 조회 실패");
+                        if (responseBody.getOutput2() != null) {
+                            return responseBody;
+                        }
+                        throw KisMarketDataException.invalidResponse("기간별 차트 데이터 조회 실패");
+                    }),
+                    60 // TTL 60초
+            );
+        }
     }
 
     /**

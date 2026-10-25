@@ -8,6 +8,8 @@ import com.antmillion.kiwoom.repository.KiwoomPeriodChartRedisRepository;
 import com.antmillion.marketdata.dto.PeriodCandle;
 import com.antmillion.marketdata.dto.PeriodChartRequest;
 import com.antmillion.marketdata.provider.PeriodChartProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -33,13 +35,15 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomPeriodChartRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
 
     public KiwoomPeriodChartProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomPeriodChartRedisRepository cache) {
+            KiwoomPeriodChartRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
     }
 
     @Override
@@ -48,11 +52,20 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
         String apiId = apiId(request.getPeriod());
         Optional<List<PeriodCandle>> cached = cache.find(tokens.getBaseUrl(), request);
         if (cached.isPresent()) return cached.get();
+        // 캐시 적중은 OPEN에서도 반환하며 탐색 허가와 성공 표본을 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquirePeriodChart(tokens, apiId);
+            List<PeriodCandle> result = call.execute(() -> load(request, apiId));
+            cache.save(tokens.getBaseUrl(), request, result);
+            return result;
+        }
+    }
+
+    private List<PeriodCandle> load(PeriodChartRequest request, String apiId) {
         KiwoomPeriodChartRequest body = new KiwoomPeriodChartRequest(request.getStockCode(),
                 request.getEndDate().format(DateTimeFormatter.BASIC_ISO_DATE));
         // KIS 기간별 시세와 같이 시세 HTTP는 한 번만 호출하고 최대 100건을 반환합니다.
         // 연속 조회 가능 헤더가 있어도 추가 호출로 기간을 채우지 않습니다.
-        limiter.acquirePeriodChart(tokens, apiId);
         KiwoomPeriodChartResponse data = fetch(apiId, body).getBody();
         if (data != null) {
             KiwoomMarketDataException.checkReturnCode(data.getReturnCode(), "Kiwoom 기간별 차트 응답이 유효하지 않습니다.");
@@ -82,7 +95,6 @@ public final class KiwoomPeriodChartProvider implements PeriodChartProvider {
                         price(price.getOpenPrice()), price(price.getHighPrice()), price(price.getLowPrice())));
             }
         }
-        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 

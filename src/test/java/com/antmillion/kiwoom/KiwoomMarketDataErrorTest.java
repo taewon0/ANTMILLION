@@ -216,7 +216,7 @@ public class KiwoomMarketDataErrorTest {
         }
         if (operation.startsWith("period-")) {
             return new KiwoomPeriodChartProvider(tokens, rest, limiter,
-                    new KiwoomPeriodChartRedisRepository(redis, clock))
+                    new KiwoomPeriodChartRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults())
                     .getPeriodChart(new PeriodChartRequest("005930", operation.substring(7), DATE.minusDays(10), DATE));
         }
         if (operation.equals("daily") || operation.equals("recent")) {
