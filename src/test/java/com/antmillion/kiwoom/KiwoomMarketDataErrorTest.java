@@ -232,7 +232,7 @@ public class KiwoomMarketDataErrorTest {
         }
         if (operation.equals("flow")) {
             return new KiwoomInvestorFlowProvider(tokens, rest, limiter,
-                    new KiwoomInvestorFlowRedisRepository(redis, clock)).getInvestorFlow("005930");
+                    new KiwoomInvestorFlowRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getInvestorFlow("005930");
         }
         KiwoomStockRankingProvider provider = new KiwoomStockRankingProvider(tokens, rest, limiter,
                 new KiwoomStockRankingRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());

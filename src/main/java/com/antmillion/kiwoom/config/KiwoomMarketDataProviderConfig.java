@@ -117,8 +117,8 @@ public class KiwoomMarketDataProviderConfig {
     @Conditional(KiwoomAuthConfig.Enabled.class)
     public KiwoomInvestorFlowProvider kiwoomInvestorFlowProvider(KiwoomTokenService tokens,
             @Qualifier("kiwoomAuthRestTemplate") RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomInvestorFlowRedisRepository cache) {
-        return new KiwoomInvestorFlowProvider(tokens, rest, limiter, cache);
+            KiwoomInvestorFlowRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
+        return new KiwoomInvestorFlowProvider(tokens, rest, limiter, cache, circuitBreakers);
     }
 
     @Bean
