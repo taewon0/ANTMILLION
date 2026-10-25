@@ -6,6 +6,7 @@ import com.antmillion.kis.dto.KisAccessTokenScope;
 import com.antmillion.kis.dto.CurrentPriceRequest;
 import com.antmillion.kis.dto.ForeignerOrganization;
 import com.antmillion.kis.exception.RateLimitExceededException;
+import com.antmillion.kis.exception.KisMarketDataException;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.repository.KisFrgnOrgnRedisRepository;
 import com.antmillion.kis.service.KisApiService;
@@ -26,7 +27,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Proxy;
@@ -159,7 +159,7 @@ public class KisInvestorFlowProviderTest {
     public void remoteFailurePropagatesWithoutCache() {
         server.expect(request -> assertEquals(url("000001"), request.getURI().toString()))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThrows(HttpServerErrorException.class, () -> provider.getInvestorFlow("000001"));
+        assertThrows(KisMarketDataException.class, () -> provider.getInvestorFlow("000001"));
         assertTrue(redis.ttls.isEmpty());
         server.verify();
     }
