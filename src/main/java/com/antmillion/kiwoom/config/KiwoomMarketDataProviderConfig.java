@@ -75,8 +75,8 @@ public class KiwoomMarketDataProviderConfig {
     @Conditional(KiwoomAuthConfig.Enabled.class)
     public KiwoomMinuteChartProvider kiwoomMinuteChartProvider(KiwoomTokenService tokens,
             @Qualifier("kiwoomAuthRestTemplate") RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomDailyMinuteRedisRepository cache) {
-        return new KiwoomMinuteChartProvider(tokens, rest, limiter, cache);
+            KiwoomDailyMinuteRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
+        return new KiwoomMinuteChartProvider(tokens, rest, limiter, cache, circuitBreakers);
     }
 
     @Bean

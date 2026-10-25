@@ -379,14 +379,16 @@ public class KisApiService {
     private DayMinutePriceResponse dayMinutePricesAPI(DayMinutePriceRequest request) {
         KisRestRequestScope scope = requestScope();
         // 캐시 없는 최근 분봉도 다른 KIS 시세 조회와 호출 예산을 공유합니다.
-        return rateLimitedClient.callWithoutCache(scope, () -> {
-            String token = getMarketDataAccessToken(scope.getTokenScope());
-            HttpHeaders headers = createApiHeader(token, scope, "FHKST03010200");
-            String url = buildDayMinuteApiUrl(scope.getBaseUrl(), request);
-            HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-            return exchangeMarketData(url, httpEntity, DayMinutePriceResponse.class,
-                    DayMinutePriceResponse::getReturnCode, "국내 시장 당일 분봉 데이터 조회 실패");
-        });
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithoutCache(scope, () -> call.execute(() -> {
+                String token = getMarketDataAccessToken(scope.getTokenScope());
+                HttpHeaders headers = createApiHeader(token, scope, "FHKST03010200");
+                String url = buildDayMinuteApiUrl(scope.getBaseUrl(), request);
+                HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                return exchangeMarketData(url, httpEntity, DayMinutePriceResponse.class,
+                        DayMinutePriceResponse::getReturnCode, "국내 시장 당일 분봉 데이터 조회 실패");
+            }));
+        }
     }
     
     /**
@@ -501,20 +503,22 @@ public class KisApiService {
      * 
      */
     private StreamMinutePriceResponse streamMinutePricesAPI(KisRestRequestScope scope, StreamMinutePriceRequest request) {
-        return rateLimitedClient.callWithCache(
-                scope,
-                null,
-                () -> {
-                    String token = getMarketDataAccessToken(scope.getTokenScope());
-                    HttpHeaders headers = createApiHeader(token, scope, "FHKST03010230");
-                    headers.set("tr_cont", "N"); // 연속 거래 여부
-                    String url = buildStreamMinuteApiUrl(scope.getBaseUrl(), request);
-                    HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-                    return exchangeMarketData(url, httpEntity, StreamMinutePriceResponse.class,
-                            StreamMinutePriceResponse::getReturnCode, "국내 시장 일별 분봉 데이터 조회 실패");
-                },
-                60
-        );
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithCache(
+                    scope,
+                    null,
+                    () -> call.execute(() -> {
+                        String token = getMarketDataAccessToken(scope.getTokenScope());
+                        HttpHeaders headers = createApiHeader(token, scope, "FHKST03010230");
+                        headers.set("tr_cont", "N"); // 연속 거래 여부
+                        String url = buildStreamMinuteApiUrl(scope.getBaseUrl(), request);
+                        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                        return exchangeMarketData(url, httpEntity, StreamMinutePriceResponse.class,
+                                StreamMinutePriceResponse::getReturnCode, "국내 시장 일별 분봉 데이터 조회 실패");
+                    }),
+                    60
+            );
+        }
     }
     
     /**
