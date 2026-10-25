@@ -73,7 +73,7 @@ public class KiwoomMarketIndexChartCacheTest {
             @Override public long currentTimeNanos() { return 0; }
             @Override public boolean isWallClockBased() { return false; }
         });
-        provider = new KiwoomMarketIndexChartProvider(tokens, rest, limiter, cache);
+        provider = new KiwoomMarketIndexChartProvider(tokens, rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     @Test
@@ -431,7 +431,7 @@ public class KiwoomMarketIndexChartCacheTest {
     public void differentCredentialsSharePublicChartCacheWithoutSharingToken() {
         cache.save(VIRTUAL, request(), candles());
         KiwoomAccessTokenScope rotated = new KiwoomAccessTokenScope("virtual", "other-key", "other-secret");
-        assertEquals(candles(), new KiwoomMarketIndexChartProvider(tokens(rotated), rest, limiter, cache)
+        assertEquals(candles(), new KiwoomMarketIndexChartProvider(tokens(rotated), rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults())
                 .getMarketIndexChart(request()));
         assertTrue(tokenRedis.reads.isEmpty());
         assertEquals(1, redis.values.size());

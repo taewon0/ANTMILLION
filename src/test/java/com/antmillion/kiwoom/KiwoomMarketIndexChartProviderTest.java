@@ -492,7 +492,7 @@ public class KiwoomMarketIndexChartProviderTest {
         KiwoomTokenServiceTest.MemoryRedis chartRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
         chartRedis.failWrites = true;
         return new KiwoomMarketIndexChartProvider(tokenService, rest, limiter,
-                new KiwoomMarketIndexChartRedisRepository(chartRedis, clock));
+                new KiwoomMarketIndexChartRedisRepository(chartRedis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private static MarketIndexChartRequest request(String code) {
