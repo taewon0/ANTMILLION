@@ -516,7 +516,7 @@ public class KiwoomInvestorFlowProviderTest {
         KiwoomTokenServiceTest.MemoryRedis cacheRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
         cacheRedis.failWrites = true;
         return new KiwoomInvestorFlowProvider(target, rest, limiter,
-                new KiwoomInvestorFlowRedisRepository(cacheRedis, clock));
+                new KiwoomInvestorFlowRedisRepository(cacheRedis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private KiwoomTokenService tokens(KiwoomAccessTokenScope target) {

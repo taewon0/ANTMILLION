@@ -464,7 +464,7 @@ public class KiwoomInvestorFlowCacheTest {
     }
 
     private KiwoomInvestorFlowProvider provider(KiwoomTokenService target) {
-        return new KiwoomInvestorFlowProvider(target, rest, limiter, cache);
+        return new KiwoomInvestorFlowProvider(target, rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private KiwoomTokenService tokens(KiwoomAccessTokenScope target) {

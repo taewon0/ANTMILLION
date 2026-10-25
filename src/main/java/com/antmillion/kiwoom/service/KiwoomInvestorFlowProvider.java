@@ -7,6 +7,8 @@ import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomInvestorFlowRedisRepository;
 import com.antmillion.marketdata.dto.InvestorFlow;
 import com.antmillion.marketdata.provider.InvestorFlowProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -32,13 +34,16 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomInvestorFlowRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
 
     public KiwoomInvestorFlowProvider(KiwoomTokenService tokens, RestTemplate rest,
-            KiwoomRestRateLimiter limiter, KiwoomInvestorFlowRedisRepository cache) {
+            KiwoomRestRateLimiter limiter, KiwoomInvestorFlowRedisRepository cache,
+            MarketDataCircuitBreakers circuitBreakers) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
     }
 
     @Override
@@ -49,8 +54,17 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
         KiwoomInvestorFlowRequest request = new KiwoomInvestorFlowRequest(stockCode);
         Optional<InvestorFlow> cached = cache.find(tokens.getBaseUrl(), request);
         if (cached.isPresent()) return cached.get();
-        // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
-        limiter.acquireInvestorFlow(tokens);
+        // 캐시 적중은 OPEN에서도 반환하며 탐색 허가와 성공 표본을 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquireInvestorFlow(tokens);
+            InvestorFlow result = call.execute(() -> load(request));
+            // 빈 목록은 저장하지 않으며 캐시 저장은 원격 성공 집계 밖에서 수행합니다.
+            if (result != null) cache.save(tokens.getBaseUrl(), request, result);
+            return result != null ? result : new InvestorFlow(null, null, null);
+        }
+    }
+
+    private InvestorFlow load(KiwoomInvestorFlowRequest request) {
         ResponseEntity<KiwoomInvestorFlowResponse> response = fetch(request);
         KiwoomInvestorFlowResponse data = response.getBody();
         if (data != null) {
@@ -80,9 +94,8 @@ public final class KiwoomInvestorFlowProvider implements InvestorFlowProvider {
             }
         }
         if (latestConflicts) throw invalidResponse();
-        // 빈 목록은 기존 KIS처럼 저장하지 않으며, 유효 행의 null/빈 수량은 그대로 캐시합니다.
-        if (latestTime != null) cache.save(tokens.getBaseUrl(), request, latest);
-        return latest;
+        // 빈 목록과 유효 행의 null/빈 수량을 구분하여 기존 캐시 정책을 유지합니다.
+        return latestTime != null ? latest : null;
     }
 
     private ResponseEntity<KiwoomInvestorFlowResponse> fetch(KiwoomInvestorFlowRequest body) {

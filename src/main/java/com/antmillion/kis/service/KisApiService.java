@@ -608,27 +608,29 @@ public class KisApiService {
      * 한국투자증권 외인기관 추정가집계 API 호출 (내부 메서드)
      */
     private KisForeignerOrganizationResponse foreignerOrganizationAPI(KisRestRequestScope scope, String stockCode) {
-        return rateLimitedClient.callWithCache(
-                scope,
-                null,
-                () -> {
-                    // 1. 접근 토큰 얻기
-                    String token = getMarketDataAccessToken(scope.getTokenScope());
-                    // 2. 헤더 설정 (이미지 명세 실전 TR ID: HHPTJ04160200)
-                    HttpHeaders headers = createApiHeader(token, scope, "HHPTJ04160200");
-                    // 3. URL 생성
-                    String url = buildForeignerOrganizationUrl(scope.getBaseUrl(), stockCode);
-                    // 4. API 호출
-                    HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-                    KisForeignerOrganizationResponse responseBody = exchangeMarketData(url, httpEntity, KisForeignerOrganizationResponse.class,
-                            KisForeignerOrganizationResponse::getReturnCode, "외인기관 가집계 데이터 조회 실패");
-                    if (responseBody.getOutput2() != null) {
-                        return responseBody;
-                    }
-                    throw KisMarketDataException.invalidResponse("외인기관 가집계 데이터 조회 실패");
-                },
-                60
-        );
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithCache(
+                    scope,
+                    null,
+                    () -> call.execute(() -> {
+                        // 1. 접근 토큰 얻기
+                        String token = getMarketDataAccessToken(scope.getTokenScope());
+                        // 2. 헤더 설정 (이미지 명세 실전 TR ID: HHPTJ04160200)
+                        HttpHeaders headers = createApiHeader(token, scope, "HHPTJ04160200");
+                        // 3. URL 생성
+                        String url = buildForeignerOrganizationUrl(scope.getBaseUrl(), stockCode);
+                        // 4. API 호출
+                        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                        KisForeignerOrganizationResponse responseBody = exchangeMarketData(url, httpEntity, KisForeignerOrganizationResponse.class,
+                                KisForeignerOrganizationResponse::getReturnCode, "외인기관 가집계 데이터 조회 실패");
+                        if (responseBody.getOutput2() != null) {
+                            return responseBody;
+                        }
+                        throw KisMarketDataException.invalidResponse("외인기관 가집계 데이터 조회 실패");
+                    }),
+                    60
+            );
+        }
     }
 
     /**
