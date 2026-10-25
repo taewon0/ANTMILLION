@@ -76,7 +76,7 @@ public class KisStockRankingProviderTest {
         limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         ranks = new KisStockVolumeRankRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null, null,
-                ranks, null, null, limiter);
+                ranks, null, null, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         provider = new KisStockRankingProvider(legacy);
     }
 

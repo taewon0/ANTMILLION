@@ -78,7 +78,7 @@ public class KisMarketIndexChartProviderTest {
         limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         charts = new KisMarketIndexChartRedisRepository(redis, new ObjectMapper());
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null,
-                charts, null, null, null, limiter);
+                charts, null, null, null, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         provider = new KisMarketIndexChartProvider(legacy);
     }
 

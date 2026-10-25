@@ -277,7 +277,7 @@ public class KisRestRateLimitTest {
         RestTemplate rest = new RestTemplate();
         MockRestServiceServer server = MockRestServiceServer.bindTo(rest).build();
         KisApiService service = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
-                null, null, null, null, null, limiter);
+                null, null, null, null, null, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         DayMinutePriceRequest request = DayMinutePriceRequest.builder().condMrktDivCode("J")
                 .inputIscd("005930").pwDataIncuYn("Y").etcClsCode("0").build();
         assertThrows(RateLimitExceededException.class, () -> service.getDayMinutePrices(request));
@@ -354,7 +354,7 @@ public class KisRestRateLimitTest {
             assertEquals("Bearer synthetic-token", request.getHeaders().getFirst("Authorization"));
         }).andRespond(withSuccess("{\"output\":{\"stck_prpr\":\"71000\"}}", MediaType.APPLICATION_JSON));
         KisApiService service = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
-                null, null, null, null, null, changing);
+                null, null, null, null, null, changing, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         assertEquals(Integer.valueOf(71000), service.getCurrentPrice(
                 CurrentPriceRequest.builder().marketCode("J").stockCode("005930").build()));
         assertEquals(17, changing.getAvailableTokens(original));

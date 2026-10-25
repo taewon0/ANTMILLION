@@ -89,7 +89,7 @@ public class KisWebSocketEnvironmentTest {
         final KisWebSocketConfig config = new KisWebSocketConfig();
         final RestTemplate rest = new RestTemplate();
         final MockRestServiceServer server = MockRestServiceServer.bindTo(rest).build();
-        final KisApiService service = new KisApiService(null, config, rest, null, null, null, null, null, null, null);
+        final KisApiService service = new KisApiService(null, config, rest, null, null, null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         final Manager manager = new Manager(service);
 
         Fixture(boolean real) { configure(real); }

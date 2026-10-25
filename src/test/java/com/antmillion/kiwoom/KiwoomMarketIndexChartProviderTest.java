@@ -401,7 +401,7 @@ public class KiwoomMarketIndexChartProviderTest {
         kisTokens.save(new KisAccessTokenScope(config.getBaseUrl(), config.appKey, config.appSecret), "kis-token", 86400);
         MarketIndexChartProvider kis = new KisMarketIndexChartProvider(new KisApiService(config, null, kisRest,
                 kisTokens, null, new KisMarketIndexChartRedisRepository(redis, new ObjectMapper()), null, null, null,
-                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1))));
+                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1)), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
         for (String code : List.of("0001", "1001")) {
             server.reset();
             kisServer.reset();

@@ -155,7 +155,7 @@ public class RealtimeMarketDataServiceTest {
             context.registerBean(SimpMessagingTemplate.class, () -> template);
             context.registerBean(TradingEngineService.class, () -> engine);
             context.registerBean(KisApiService.class, () -> new KisApiService(null, null, null, null, null,
-                    null, null, null, null, null));
+                    null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
             context.register(RealtimeMarketDataService.class, KisWebSocketManager.class);
             context.refresh();
             assertTrue(context.getBean(RealtimeMarketDataReceiver.class) instanceof RealtimeMarketDataService);

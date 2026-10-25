@@ -21,6 +21,8 @@ import com.antmillion.marketdata.provider.MarketIndexChartProvider;
 import com.antmillion.marketdata.provider.StockRankingProvider;
 import com.antmillion.marketdata.provider.InvestorFlowProvider;
 import com.antmillion.marketdata.provider.MarketDataProviderRegistration;
+import com.antmillion.marketdata.config.MarketDataCircuitBreakerConfig;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
@@ -33,7 +35,7 @@ import java.time.Clock;
 
 /** 인증 활성화 시 여섯 REST 계약을 등록하며 실제 선택은 marketdata.provider로 결정합니다. */
 @Configuration
-@Import(KiwoomAuthConfig.class)
+@Import({KiwoomAuthConfig.class, MarketDataCircuitBreakerConfig.class, MarketDataCircuitBreakers.class})
 public class KiwoomMarketDataProviderConfig {
     @Bean
     @Conditional(KiwoomAuthConfig.Enabled.class)
@@ -45,8 +47,8 @@ public class KiwoomMarketDataProviderConfig {
     @Conditional(KiwoomAuthConfig.Enabled.class)
     public KiwoomCurrentPriceProvider kiwoomCurrentPriceProvider(KiwoomTokenService tokens,
             @Qualifier("kiwoomAuthRestTemplate") RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomCurrentPriceRedisRepository cache) {
-        return new KiwoomCurrentPriceProvider(tokens, rest, limiter, cache);
+            KiwoomCurrentPriceRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
+        return new KiwoomCurrentPriceProvider(tokens, rest, limiter, cache, circuitBreakers);
     }
 
     @Bean

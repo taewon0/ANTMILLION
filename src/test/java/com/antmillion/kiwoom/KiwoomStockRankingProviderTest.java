@@ -396,7 +396,7 @@ public class KiwoomStockRankingProviderTest {
         kisTokens.save(new KisAccessTokenScope(config.getBaseUrl(), config.appKey, config.appSecret), "kis-token", 86400);
         StockRankingProvider kis = new KisStockRankingProvider(new KisApiService(config, null, kisRest, kisTokens, null, null,
                 new KisStockVolumeRankRedisRepository(redis, new ObjectMapper()), null, null,
-                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1))));
+                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1)), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
         for (boolean volume : List.of(false, true)) {
             server.reset();
             kisServer.reset();

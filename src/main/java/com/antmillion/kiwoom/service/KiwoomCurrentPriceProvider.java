@@ -7,6 +7,8 @@ import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomCurrentPriceRedisRepository;
 import com.antmillion.marketdata.dto.CurrentQuote;
 import com.antmillion.marketdata.provider.CurrentPriceProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -25,27 +27,33 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomCurrentPriceRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
 
     public KiwoomCurrentPriceProvider(KiwoomTokenService tokens, RestTemplate rest, KiwoomRestRateLimiter limiter,
-                                      KiwoomCurrentPriceRedisRepository cache) {
+                                      KiwoomCurrentPriceRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
     }
 
     @Override
     public Integer getCurrentPrice(String stockCode) {
         validateStockCode(stockCode);
-        try {
-            limiter.acquireCurrentPrice(tokens);
-        } catch (KiwoomRateLimitExceededException e) {
-            return cache.findPrice(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            try {
+                limiter.acquireCurrentPrice(tokens);
+            } catch (KiwoomRateLimitExceededException e) {
+                return cache.findPrice(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+            }
+            Integer result = call.execute(() -> {
+                String price = normalizePrice(fetch(stockCode).getCurrentPrice());
+                return price == null || price.isEmpty() ? null : Integer.valueOf(price);
+            });
+            cache.savePrice(tokens.getBaseUrl(), stockCode, result);
+            return result;
         }
-        String price = normalizePrice(fetch(stockCode).getCurrentPrice());
-        Integer result = price == null || price.isEmpty() ? null : Integer.valueOf(price);
-        cache.savePrice(tokens.getBaseUrl(), stockCode, result);
-        return result;
     }
 
     @Override
@@ -65,16 +73,20 @@ public final class KiwoomCurrentPriceProvider implements CurrentPriceProvider {
 
     private CurrentQuote getCurrentQuote(String stockCode) {
         validateStockCode(stockCode);
-        try {
-            limiter.acquireCurrentPrice(tokens);
-        } catch (KiwoomRateLimitExceededException e) {
-            return cache.findQuote(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            try {
+                limiter.acquireCurrentPrice(tokens);
+            } catch (KiwoomRateLimitExceededException e) {
+                return cache.findQuote(tokens.getBaseUrl(), stockCode).orElseThrow(() -> e);
+            }
+            CurrentQuote result = call.execute(() -> {
+                KiwoomCurrentPriceResponse response = fetch(stockCode);
+                return new CurrentQuote(stockCode, normalizePrice(response.getCurrentPrice()),
+                        normalizeChangeRate(response.getChangeRate()));
+            });
+            cache.saveQuote(tokens.getBaseUrl(), result);
+            return result;
         }
-        KiwoomCurrentPriceResponse response = fetch(stockCode);
-        CurrentQuote result = new CurrentQuote(stockCode, normalizePrice(response.getCurrentPrice()),
-                normalizeChangeRate(response.getChangeRate()));
-        cache.saveQuote(tokens.getBaseUrl(), result);
-        return result;
     }
 
     private void validateStockCode(String stockCode) {

@@ -238,7 +238,7 @@ public class MarketDataRoutingTest {
         });
         // 의존성이 없는 서비스는 생성만 합니다. 잘못된 KIS 호출은 외부 접속 전에 실패합니다.
         context.registerBean(KisApiService.class, () -> new KisApiService(null, null, null, null, null,
-                null, null, null, null, null));
+                null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
         context.register(KisMarketDataProviderConfig.class);
         context.register(ADAPTERS.toArray(new Class<?>[0]));
         // 공통 패키지 스캔은 유지하며 REST 조회가 WS 요청을 발생시키면 실패합니다.

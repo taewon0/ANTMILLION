@@ -65,7 +65,7 @@ public class KisCurrentPriceProviderTest {
         config.acntPrdtCd = "01";
         limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
-                null, null, null, null, null, limiter);
+                null, null, null, null, null, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         provider = new KisCurrentPriceProvider(legacy);
     }
 
