@@ -103,8 +103,8 @@ public class KiwoomMarketDataProviderConfig {
     @Conditional(KiwoomAuthConfig.Enabled.class)
     public KiwoomStockRankingProvider kiwoomStockRankingProvider(KiwoomTokenService tokens,
             @Qualifier("kiwoomAuthRestTemplate") RestTemplate rest, KiwoomRestRateLimiter limiter,
-            KiwoomStockRankingRedisRepository cache) {
-        return new KiwoomStockRankingProvider(tokens, rest, limiter, cache);
+            KiwoomStockRankingRedisRepository cache, MarketDataCircuitBreakers circuitBreakers) {
+        return new KiwoomStockRankingProvider(tokens, rest, limiter, cache, circuitBreakers);
     }
 
     @Bean
