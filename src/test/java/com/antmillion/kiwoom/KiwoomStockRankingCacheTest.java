@@ -73,7 +73,7 @@ public class KiwoomStockRankingCacheTest {
             @Override public long currentTimeNanos() { return clock.millis() * 1_000_000; }
             @Override public boolean isWallClockBased() { return false; }
         });
-        provider = new KiwoomStockRankingProvider(tokens, rest, limiter, cache);
+        provider = new KiwoomStockRankingProvider(tokens, rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     @Test
@@ -382,7 +382,7 @@ public class KiwoomStockRankingCacheTest {
     public void differentCredentialsSharePublicRankingCacheWithoutSharingToken() {
         cache.save(VIRTUAL, request(false), stocks());
         KiwoomAccessTokenScope rotated = new KiwoomAccessTokenScope("virtual", "other-key", "other-secret");
-        assertEquals(stocks(), new KiwoomStockRankingProvider(tokens(rotated), rest, limiter, cache).getTradingValueRanks());
+        assertEquals(stocks(), new KiwoomStockRankingProvider(tokens(rotated), rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getTradingValueRanks());
         assertTrue(tokenRedis.reads.isEmpty());
         assertEquals(1, redis.values.size());
     }
@@ -395,7 +395,7 @@ public class KiwoomStockRankingCacheTest {
                 KiwoomAccessTokenScope real = new KiwoomAccessTokenScope("real", "synthetic-key", "synthetic-secret");
                 tokenCache.save(real, "synthetic-token", clock.instant().plusSeconds(200_000), 600);
                 for (KiwoomAccessTokenScope target : List.of(realFirst ? real : scope, realFirst ? scope : real)) {
-                    KiwoomStockRankingProvider selected = new KiwoomStockRankingProvider(tokens(target), rest, limiter, cache);
+                    KiwoomStockRankingProvider selected = new KiwoomStockRankingProvider(tokens(target), rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
                     for (boolean volume : List.of(volumeFirst, !volumeFirst)) {
                         server.reset();
                         clock.advanceSeconds(1);

@@ -428,23 +428,28 @@ public class KisApiService {
         log.info("한국투자증권 거래량순위 API 호출");
         KisStockVolumeRankResponse response = stockVolumeRankAPI(scope, request);
         kisStockVolumeRankRedisRepository.save(baseUrl, request, response.getOutput());
-        return  response.getOutput();
+        return response.getOutput();
     }
 
     private KisStockVolumeRankResponse stockVolumeRankAPI(KisRestRequestScope scope, StockVolumeRankRequest request) {
-        return rateLimitedClient.callWithCache(
-                scope,
-                null,
-                () -> {
-                    String token = getMarketDataAccessToken(scope.getTokenScope());
-                    HttpHeaders headers = createApiHeader(token, scope, "FHPST01710000");
-                    String url = buildStockVolumeRankUrl(scope.getBaseUrl(), request);
-                    HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
-                    return exchangeMarketData(url, httpEntity, KisStockVolumeRankResponse.class,
-                            KisStockVolumeRankResponse::getReturnCode, "거래량 순위 데이터 조회 실패");
-                },
-                60
-        );
+        // 캐시 반환은 공유 CB의 표본·HALF_OPEN 탐색 허가를 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithCache(
+                    scope,
+                    null,
+                    () -> call.execute(() -> {
+                        String token = getMarketDataAccessToken(scope.getTokenScope());
+                        HttpHeaders headers = createApiHeader(token, scope, "FHPST01710000");
+                        String url = buildStockVolumeRankUrl(scope.getBaseUrl(), request);
+                        HttpEntity<Void> httpEntity = new HttpEntity<>(headers);
+                        KisStockVolumeRankResponse response = exchangeMarketData(url, httpEntity, KisStockVolumeRankResponse.class,
+                                KisStockVolumeRankResponse::getReturnCode, "거래량 순위 데이터 조회 실패");
+                        if (response.getOutput() == null) throw KisMarketDataException.invalidResponse("거래량 순위 데이터 조회 실패");
+                        return response;
+                    }),
+                    60
+            );
+        }
     }
 
     private String buildStockVolumeRankUrl(String baseUrl, StockVolumeRankRequest request) {

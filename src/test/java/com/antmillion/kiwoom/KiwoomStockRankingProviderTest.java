@@ -504,7 +504,7 @@ public class KiwoomStockRankingProviderTest {
         KiwoomTokenServiceTest.MemoryRedis cacheRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
         cacheRedis.failWrites = true;
         return new KiwoomStockRankingProvider(target, rest, limiter,
-                new KiwoomStockRankingRedisRepository(cacheRedis, clock));
+                new KiwoomStockRankingRedisRepository(cacheRedis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private KiwoomTokenService tokens(KiwoomAccessTokenScope target) {

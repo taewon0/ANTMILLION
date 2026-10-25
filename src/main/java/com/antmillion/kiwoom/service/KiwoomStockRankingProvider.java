@@ -7,6 +7,8 @@ import com.antmillion.kiwoom.exception.KiwoomMarketDataException;
 import com.antmillion.kiwoom.repository.KiwoomStockRankingRedisRepository;
 import com.antmillion.marketdata.dto.RankedStock;
 import com.antmillion.marketdata.provider.StockRankingProvider;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -26,13 +28,16 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
     private final RestTemplate rest;
     private final KiwoomRestRateLimiter limiter;
     private final KiwoomStockRankingRedisRepository cache;
+    private final MarketDataCircuitBreakers circuitBreakers;
 
     public KiwoomStockRankingProvider(KiwoomTokenService tokens, RestTemplate rest,
-            KiwoomRestRateLimiter limiter, KiwoomStockRankingRedisRepository cache) {
+            KiwoomRestRateLimiter limiter, KiwoomStockRankingRedisRepository cache,
+            MarketDataCircuitBreakers circuitBreakers) {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.rest = Objects.requireNonNull(rest, "rest");
         this.limiter = Objects.requireNonNull(limiter, "limiter");
         this.cache = Objects.requireNonNull(cache, "cache");
+        this.circuitBreakers = Objects.requireNonNull(circuitBreakers, "circuitBreakers");
     }
 
     @Override
@@ -50,8 +55,16 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
         KiwoomStockRankingRequest request = new KiwoomStockRankingRequest(volumeOrder);
         Optional<List<RankedStock>> cached = cache.find(tokens.getBaseUrl(), request);
         if (cached.isPresent()) return cached.get();
-        // 다른 조회와 같은 singleton 예산을 사용하며 토큰 조회보다 먼저 거절합니다.
-        limiter.acquireStockRanking(tokens);
+        // 캐시 적중은 OPEN에서도 반환하며 탐색 허가와 성공 표본을 소비하지 않습니다.
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIWOOM, tokens.getBaseUrl())) {
+            limiter.acquireStockRanking(tokens);
+            List<RankedStock> result = call.execute(() -> load(request));
+            cache.save(tokens.getBaseUrl(), request, result);
+            return result;
+        }
+    }
+
+    private List<RankedStock> load(KiwoomStockRankingRequest request) {
         KiwoomStockRankingResponse response = fetch(request);
         if (response != null) {
             KiwoomMarketDataException.checkReturnCode(response.getReturnCode(), "Kiwoom 종목 순위 응답이 유효하지 않습니다.");
@@ -72,7 +85,6 @@ public final class KiwoomStockRankingProvider implements StockRankingProvider {
                     integer(stock.getCurrentPrice(), true), integer(stock.getAccumulatedVolume(), false),
                     rate(stock.getChangeRate()), false));
         }
-        cache.save(tokens.getBaseUrl(), request, result);
         return result;
     }
 

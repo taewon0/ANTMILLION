@@ -271,6 +271,29 @@ public class KiwoomMarketDataRoutingTest {
     }
 
     @Test
+    public void selectedRankingSharesCircuitAndRejectsBothOrdersBeforeTokenAccess() {
+        Map<String, Object> props = Fixture.properties("kiwoom", "virtual");
+        props.put("marketdata.circuit-breaker.minimum-calls", "2");
+        try (Fixture f = new Fixture(props, null)) {
+            f.start(); f.seedToken();
+            StockRankingProvider ranking = f.context.getBean(StockRankingProvider.class);
+            CurrentPriceProvider prices = f.context.getBean(CurrentPriceProvider.class);
+            Object shared = f.context.getBean(com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.class);
+            assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(ranking, "circuitBreakers"));
+            assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(prices, "circuitBreakers"));
+            f.server.expect(requestTo(f.base() + "/api/dostk/rkinfo")).andRespond(withServerError());
+            f.server.expect(requestTo(f.base() + "/api/dostk/stkinfo")).andRespond(withServerError());
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class, ranking::getVolumeRanks);
+            f.refill();
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class, () -> prices.getCurrentPrice("005930"));
+            int reads = f.redis.reads.size();
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class, ranking::getTradingValueRanks);
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class, ranking::getVolumeRanks);
+            assertEquals(reads + 2, f.redis.reads.size());
+        }
+    }
+
+    @Test
     public void allNineOperationsUseRegisteredAdaptersAndDedicatedHttp() {
         try (Fixture f = new Fixture("kiwoom", "virtual")) {
             f.start();
