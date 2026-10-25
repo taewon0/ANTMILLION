@@ -2,6 +2,7 @@ package com.antmillion.config;
 
 import com.antmillion.kis.exception.RateLimitExceededException;
 import com.antmillion.kiwoom.exception.KiwoomRateLimitExceededException;
+import com.antmillion.marketdata.exception.MarketDataUnavailableException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,14 @@ import java.util.Map;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(MarketDataUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleMarketDataUnavailable(MarketDataUnavailableException ex) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("error", "Market data unavailable");
+        body.put("message", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
 
     @ExceptionHandler(KiwoomRateLimitExceededException.class)
     public ResponseEntity<Map<String, Object>> handleKiwoomRateLimitExceeded(KiwoomRateLimitExceededException ex) {

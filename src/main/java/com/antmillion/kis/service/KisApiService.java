@@ -5,6 +5,8 @@ import com.antmillion.kis.config.KisWebSocketConfig;
 import com.antmillion.kis.constant.KisApiConstant;
 import com.antmillion.kis.dto.*;
 import com.antmillion.kis.exception.KisMarketDataException;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers;
+import com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.Provider;
 import com.antmillion.kis.repository.KisAccessTokenRedisRepository;
 import com.antmillion.kis.repository.KisChartRedisRepository;
 import com.antmillion.kis.repository.KisFrgnOrgnRedisRepository;
@@ -30,6 +32,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -50,6 +53,13 @@ public class KisApiService {
     private final RedissonClient redissonClient;
     // Bucket4j으로 한국투자증권 api 유량 제어
     private final RateLimitedKisApiClient rateLimitedClient;
+    private final MarketDataCircuitBreakers circuitBreakers;
+
+    private <T> T callCurrentPrice(KisRestRequestScope scope, String cacheKey, Supplier<T> remoteCall) {
+        try (MarketDataCircuitBreakers.Call call = circuitBreakers.acquire(Provider.KIS, scope.getBaseUrl())) {
+            return rateLimitedClient.callWithCache(scope, cacheKey, () -> call.execute(remoteCall), 10);
+        }
+    }
 
     private KisRestRequestScope requestScope() {
         return new KisRestRequestScope(config.getBaseUrl(), config.accountNo, config.acntPrdtCd,
@@ -529,7 +539,7 @@ public class KisApiService {
         String baseUrl = scope.getBaseUrl();
         String cacheKey = buildCurrentPriceCacheKey("kis:price:single:v2", baseUrl, request);
 
-        return rateLimitedClient.callWithCache(
+        return callCurrentPrice(
                 scope,
                 cacheKey,
                 () -> {
@@ -551,8 +561,7 @@ public class KisApiService {
                         }
                     }
                     throw KisMarketDataException.invalidResponse("현재가 조회 실패");
-                },
-                10
+                }
         );
     }
 
@@ -625,7 +634,7 @@ public class KisApiService {
         String baseUrl = scope.getBaseUrl();
         String cacheKey = buildCurrentPriceCacheKey("kis:price:detail:v2", baseUrl, request);
 
-        return rateLimitedClient.callWithCache(
+        return callCurrentPrice(
                 scope,
                 cacheKey,
                 () -> {
@@ -643,8 +652,7 @@ public class KisApiService {
                         return responseBody.getOutput();
                     }
                     throw KisMarketDataException.invalidResponse("현재가 정보 조회 실패");
-                },
-                10
+                }
         );
     }
 

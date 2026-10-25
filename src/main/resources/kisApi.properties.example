@@ -7,6 +7,17 @@ kis.mode=real
 
 # REST는 kis / kiwoom 중 기동 시 선택합니다. Kiwoom은 별도 인증 활성화/자격증명이 필요합니다.
 marketdata.provider=kis
+# 현재가에 우선 연결한 Provider·실제 요청 환경별 JVM REST Circuit Breaker입니다.
+# KIS·Kiwoom 공통 정책이며 차트/순위 등 다른 REST API·WS는 아직 연결하지 않습니다.
+# 5xx·통신 장애만 실패 집계합니다. 캐시/로컬 한도·토큰·인증·업무 오류는 집계하지 않습니다.
+# OPEN은 토큰/시세 HTTP 전에 거절합니다. 자동 전환·추가 fallback은 없습니다.
+# 변경 후 재시작하며 재시작 시 CB 상태/표본도 초기화됩니다.
+marketdata.circuit-breaker.enabled=true
+marketdata.circuit-breaker.window-size=10
+marketdata.circuit-breaker.minimum-calls=5
+marketdata.circuit-breaker.failure-rate=50
+marketdata.circuit-breaker.open-seconds=30
+marketdata.circuit-breaker.half-open-calls=1
 # 실시간 WS는 REST 선택과 독립입니다. 현재 등록된 구현은 kis입니다.
 marketdata.realtime-provider=kis
 

@@ -144,6 +144,34 @@ public class KiwoomMarketDataRoutingTest {
     }
 
     @Test
+    public void selectedCurrentPriceUsesConfiguredSharedCircuitAndRejectsBeforeTokenIo() {
+        Map<String, Object> props = Fixture.properties("kiwoom", "virtual");
+        props.put("marketdata.circuit-breaker.minimum-calls", "2");
+        try (Fixture f = new Fixture(props, null)) {
+            f.start();
+            CurrentPriceProvider prices = f.context.getBean(CurrentPriceProvider.class);
+            assertSame(f.context.getBean(com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.class),
+                    org.springframework.test.util.ReflectionTestUtils.getField(prices, "circuitBreakers"));
+            f.server.expect(requestTo(f.base() + "/oauth2/token")).andRespond(withSuccess(
+                    "{\"token\":\"synthetic-token\",\"token_type\":\"bearer\",\"expires_dt\":\"20990101000000\"}",
+                    MediaType.APPLICATION_JSON));
+            for (int i = 0; i < 2; i++) f.server.expect(requestTo(f.base() + "/api/dostk/stkinfo"))
+                    .andRespond(withServerError());
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            f.refill();
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            int reads = f.redis.reads.size();
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            assertTrue(prices.getCurrentPrices(List.of("005930", "000660")).isEmpty());
+            assertEquals(reads, f.redis.reads.size());
+            assertEquals(1, f.locks.unlocks.get());
+        }
+    }
+
+    @Test
     public void allNineOperationsUseRegisteredAdaptersAndDedicatedHttp() {
         try (Fixture f = new Fixture("kiwoom", "virtual")) {
             f.start();
@@ -349,7 +377,7 @@ public class KiwoomMarketDataRoutingTest {
                     KisMarketIndexChartProvider.class, KisStockRankingProvider.class, KisInvestorFlowProvider.class,
                     InvestorSignalService.class);
             context.registerBean(KisApiService.class, () -> new KisApiService(null, null, null, null, null,
-                    null, null, null, null, null));
+                    null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
             // 전용 Kiwoom HTTP와 KIS 기본 HTTP 모두 네트워크를 사용하지 못하게 고정합니다.
             context.addBeanFactoryPostProcessor(factory -> {
                 ((AbstractBeanDefinition) factory.getBeanDefinition("kisRestTemplate")).setInstanceSupplier(() -> kisRest);

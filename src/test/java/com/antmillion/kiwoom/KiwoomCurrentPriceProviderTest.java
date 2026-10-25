@@ -263,7 +263,7 @@ public class KiwoomCurrentPriceProviderTest {
             }
         };
         quote("000660", "200", "0");
-        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest, limiter, cache);
+        CurrentPriceProvider adapter = new KiwoomCurrentPriceProvider(tokens, rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         assertEquals(List.of(new CurrentQuote("000660", "200", "0")),
                 adapter.getCurrentPrices(List.of("005930", "000660")));
         assertEquals(2, calls.get());
@@ -525,7 +525,7 @@ public class KiwoomCurrentPriceProviderTest {
 
     private CurrentPriceProvider provider(KiwoomAccessTokenScope tokenScope) {
         return new KiwoomCurrentPriceProvider(new KiwoomTokenService(tokenScope, 600, rest, repository,
-                locks.client(), clock), rest, limiter, cache);
+                locks.client(), clock), rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private void cacheToken(KiwoomAccessTokenScope tokenScope, String token) {

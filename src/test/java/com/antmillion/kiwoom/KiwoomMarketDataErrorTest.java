@@ -212,7 +212,7 @@ public class KiwoomMarketDataErrorTest {
     private Object query() {
         if (operation.equals("current")) {
             return new KiwoomCurrentPriceProvider(tokens, rest, limiter,
-                    new KiwoomCurrentPriceRedisRepository(redis, clock)).getCurrentPrice("005930");
+                    new KiwoomCurrentPriceRedisRepository(redis, clock), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getCurrentPrice("005930");
         }
         if (operation.startsWith("period-")) {
             return new KiwoomPeriodChartProvider(tokens, rest, limiter,

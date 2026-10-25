@@ -93,7 +93,7 @@ public class KiwoomAuthConfigTest {
         try (AnnotationConfigApplicationContext context = context(Map.of(), null)) {
             context.registerBean(com.antmillion.kis.service.KisApiService.class,
                     () -> new com.antmillion.kis.service.KisApiService(null, null, null, null, null,
-                            null, null, null, null, null));
+                            null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
             context.register(com.antmillion.kis.config.KisMarketDataProviderConfig.class,
                     com.antmillion.marketdata.config.MarketDataRoutingConfig.class,
                     com.antmillion.kis.service.KisCurrentPriceProvider.class,
@@ -124,7 +124,7 @@ public class KiwoomAuthConfigTest {
             infrastructure(context, redis, new KiwoomTokenServiceTest.LockClient(), rest);
             context.registerBean(com.antmillion.kis.service.KisApiService.class,
                     () -> new com.antmillion.kis.service.KisApiService(null, null, null, null, null,
-                            null, null, null, null, null));
+                            null, null, null, null, null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
             context.register(com.antmillion.kis.config.KisMarketDataProviderConfig.class,
                     com.antmillion.marketdata.config.MarketDataRoutingConfig.class,
                     com.antmillion.kis.service.KisCurrentPriceProvider.class,

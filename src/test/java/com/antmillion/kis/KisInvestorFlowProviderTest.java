@@ -73,7 +73,7 @@ public class KisInvestorFlowProviderTest {
         limiter = new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1));
         baseUrlReads = 0;
         legacy = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis), null, null,
-                null, new KisFrgnOrgnRedisRepository(redis, new ObjectMapper()), null, limiter);
+                null, new KisFrgnOrgnRedisRepository(redis, new ObjectMapper()), null, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         provider = new KisInvestorFlowProvider(legacy);
     }
 

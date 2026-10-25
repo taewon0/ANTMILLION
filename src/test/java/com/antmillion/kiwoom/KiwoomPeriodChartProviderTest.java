@@ -170,7 +170,7 @@ public class KiwoomPeriodChartProviderTest {
                 new KisApiService(kisConfig, null, kisRest, kisTokens,
                         new KisChartRedisRepository(redis, new ObjectMapper()),
                         null, null, null, null, new RateLimitedKisApiClient(redis,
-                        kisConfig, new KisRestRateLimitConfig(18, 1))));
+                        kisConfig, new KisRestRateLimitConfig(18, 1)), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
         for (int i = 0; i < PERIODS.length; i++) {
             server.reset();
             kisServer.reset();

@@ -267,7 +267,7 @@ public class KisAccessTokenIsolationTest {
 
     private KisApiService service(KisConfig config) {
         return new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
-                null, null, null, null, locks.client(), null);
+                null, null, null, null, locks.client(), null, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     private void expectToken(KisConfig config, String token) {

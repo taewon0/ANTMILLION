@@ -17,6 +17,12 @@
 		<jjwt.version>0.11.5</jjwt.version>
 	</properties>
 	<dependencies>
+		<!-- Java 11 호환 REST Circuit Breaker (Spring Boot/AOP 없이 사용) -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-circuitbreaker</artifactId>
+			<version>1.7.1</version>
+		</dependency>
 		<!-- 외부 api(한국투자증권 api) 호출 유량 제한 -->
 		<dependency>
 			<groupId>com.bucket4j</groupId>

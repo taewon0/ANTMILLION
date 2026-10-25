@@ -434,7 +434,7 @@ public class KiwoomMinuteChartProviderTest {
         kisTokens.save(new KisAccessTokenScope(config.getBaseUrl(), config.appKey, config.appSecret), "synthetic-kis-token", 86400);
         MinuteChartProvider kis = new KisMinuteChartProvider(new KisApiService(config, null, kisRest, kisTokens,
                 new KisChartRedisRepository(redis, new ObjectMapper()), null, null, null, null,
-                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1))));
+                new RateLimitedKisApiClient(redis, config, new KisRestRateLimitConfig(18, 1)), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
         for (boolean daily : List.of(true, false)) {
             String path = daily ? "inquire-time-dailychartprice" : "inquire-time-itemchartprice";
             kisServer.expect(http -> {

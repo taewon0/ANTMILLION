@@ -421,7 +421,7 @@ public class KiwoomInvestorFlowProviderTest {
             kisTokens.save(new KisAccessTokenScope(config.getBaseUrl(), config.appKey, config.appSecret), "kis-token", 86400);
             InvestorFlowProvider kis = new KisInvestorFlowProvider(new KisApiService(config, null, kisRest, kisTokens, null, null,
                     null, new KisFrgnOrgnRedisRepository(kisRedis, new ObjectMapper()), null,
-                    new RateLimitedKisApiClient(kisRedis, config, new KisRestRateLimitConfig(18, 1))));
+                    new RateLimitedKisApiClient(kisRedis, config, new KisRestRateLimitConfig(18, 1)), com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()));
             kisServer.expect(request -> {
                 assertEquals(HttpMethod.GET, request.getMethod());
                 assertEquals("HHPTJ04160200", request.getHeaders().getFirst("tr_id"));

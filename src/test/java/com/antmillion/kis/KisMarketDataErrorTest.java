@@ -103,7 +103,7 @@ public class KisMarketDataErrorTest {
         service = new KisApiService(config, null, rest, new KisAccessTokenRedisRepository(redis),
                 new KisChartRedisRepository(redis, mapper), new KisMarketIndexChartRedisRepository(redis, mapper),
                 new KisStockVolumeRankRedisRepository(redis, mapper), new KisFrgnOrgnRedisRepository(redis, mapper),
-                locks, limiter);
+                locks, limiter, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     @Test
