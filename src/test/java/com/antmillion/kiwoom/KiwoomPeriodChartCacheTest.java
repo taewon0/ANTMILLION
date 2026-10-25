@@ -66,7 +66,7 @@ public class KiwoomPeriodChartCacheTest {
             @Override public long currentTimeNanos() { return 0; }
             @Override public boolean isWallClockBased() { return false; }
         });
-        provider = new KiwoomPeriodChartProvider(tokens, rest, limiter, cache);
+        provider = new KiwoomPeriodChartProvider(tokens, rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
     }
 
     @Test
@@ -336,7 +336,7 @@ public class KiwoomPeriodChartCacheTest {
     public void differentCredentialsSharePublicChartCacheWithoutSharingToken() {
         cache.save(VIRTUAL, request(), candles());
         KiwoomAccessTokenScope rotated = new KiwoomAccessTokenScope("virtual", "other-key", "other-secret");
-        assertEquals(candles(), new KiwoomPeriodChartProvider(tokens(rotated), rest, limiter, cache)
+        assertEquals(candles(), new KiwoomPeriodChartProvider(tokens(rotated), rest, limiter, cache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults())
                 .getPeriodChart(request()));
         assertTrue(tokenRedis.reads.isEmpty());
         assertEquals(1, redis.values.size());

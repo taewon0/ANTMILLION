@@ -88,7 +88,7 @@ public class KiwoomPeriodChartProviderTest {
         KiwoomTokenServiceTest.MemoryRedis chartRedis = new KiwoomTokenServiceTest.MemoryRedis(clock);
         chartRedis.failWrites = true;
         chartCache = new KiwoomPeriodChartRedisRepository(chartRedis, clock);
-        provider = new KiwoomPeriodChartProvider(tokens, rest, limiter, chartCache);
+        provider = new KiwoomPeriodChartProvider(tokens, rest, limiter, chartCache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         cacheToken(scope, "synthetic-token");
     }
 
@@ -409,7 +409,7 @@ public class KiwoomPeriodChartProviderTest {
         cacheToken(real, "real-token");
         KiwoomTokenService realTokens = tokens(real);
         limiter.acquireCurrentPrice(realTokens);
-        PeriodChartProvider realProvider = new KiwoomPeriodChartProvider(realTokens, rest, limiter, chartCache);
+        PeriodChartProvider realProvider = new KiwoomPeriodChartProvider(realTokens, rest, limiter, chartCache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults());
         for (int i = 0; i < PERIODS.length; i++) {
             expect(real, API_IDS[i], null, "20261023", "real-token")
                     .andRespond(withSuccess(body(FIELDS[i]), MediaType.APPLICATION_JSON));
@@ -504,7 +504,7 @@ public class KiwoomPeriodChartProviderTest {
                         + "\"expires_dt\":\"20261024090000\",\"return_code\":0}", MediaType.APPLICATION_JSON));
         expect(real, "ka10081", null, "20261023", "real-token")
                 .andRespond(withSuccess(body(FIELDS[0]), MediaType.APPLICATION_JSON));
-        assertTrue(new KiwoomPeriodChartProvider(tokens(real), rest, limiter, chartCache).getPeriodChart(request("D")).isEmpty());
+        assertTrue(new KiwoomPeriodChartProvider(tokens(real), rest, limiter, chartCache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getPeriodChart(request("D")).isEmpty());
         assertEquals(List.of(real.getLockKey()), locks.keys);
         assertEquals("synthetic-token", repository.findAccessToken(scope, 600).orElseThrow());
         server.verify();
@@ -522,8 +522,8 @@ public class KiwoomPeriodChartProviderTest {
                     .andRespond(withSuccess(body(FIELDS[0]), MediaType.APPLICATION_JSON));
             expect(second, "ka10081", null, "20261023", realFirst ? "synthetic-token" : "real-token")
                     .andRespond(withSuccess(body(FIELDS[0]), MediaType.APPLICATION_JSON));
-            new KiwoomPeriodChartProvider(tokens(first), rest, limiter, chartCache).getPeriodChart(request("D"));
-            new KiwoomPeriodChartProvider(tokens(second), rest, limiter, chartCache).getPeriodChart(request("D"));
+            new KiwoomPeriodChartProvider(tokens(first), rest, limiter, chartCache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getPeriodChart(request("D"));
+            new KiwoomPeriodChartProvider(tokens(second), rest, limiter, chartCache, com.antmillion.marketdata.CircuitBreakerTestSupport.defaults()).getPeriodChart(request("D"));
             server.verify();
         }
     }

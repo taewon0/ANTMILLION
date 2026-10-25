@@ -172,6 +172,36 @@ public class KiwoomMarketDataRoutingTest {
     }
 
     @Test
+    public void selectedPeriodChartSharesConfiguredCircuitWithCurrentPrice() {
+        Map<String, Object> props = Fixture.properties("kiwoom", "virtual");
+        props.put("marketdata.circuit-breaker.minimum-calls", "2");
+        try (Fixture f = new Fixture(props, null)) {
+            f.start();
+            CurrentPriceProvider prices = f.context.getBean(CurrentPriceProvider.class);
+            PeriodChartProvider charts = f.context.getBean(PeriodChartProvider.class);
+            Object shared = f.context.getBean(com.antmillion.marketdata.resilience.MarketDataCircuitBreakers.class);
+            assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(prices, "circuitBreakers"));
+            assertSame(shared, org.springframework.test.util.ReflectionTestUtils.getField(charts, "circuitBreakers"));
+            f.server.expect(requestTo(f.base() + "/oauth2/token")).andRespond(withSuccess(
+                    "{\"token\":\"synthetic-token\",\"token_type\":\"bearer\",\"expires_dt\":\"20990101000000\"}",
+                    MediaType.APPLICATION_JSON));
+            f.server.expect(requestTo(f.base() + "/api/dostk/stkinfo")).andRespond(withServerError());
+            f.server.expect(requestTo(f.base() + "/api/dostk/chart")).andRespond(withServerError());
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            f.refill();
+            PeriodChartRequest request = new PeriodChartRequest("005930", "D", DATE.minusDays(10), DATE);
+            assertThrows(com.antmillion.kiwoom.exception.KiwoomMarketDataException.class,
+                    () -> charts.getPeriodChart(request));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> charts.getPeriodChart(request));
+            assertThrows(com.antmillion.marketdata.exception.MarketDataUnavailableException.class,
+                    () -> prices.getCurrentPrice("005930"));
+            assertEquals(1, f.locks.unlocks.get());
+        }
+    }
+
+    @Test
     public void allNineOperationsUseRegisteredAdaptersAndDedicatedHttp() {
         try (Fixture f = new Fixture("kiwoom", "virtual")) {
             f.start();
